@@ -1,0 +1,36 @@
+# dnsblock – Container-Profil (AdGuard-Style, standalone)
+# Upstream: DoH bevorzugt, UDP als Failover. Im Container gibt es kein
+# lokales Unbound, daher bewusst öffentliche Resolver.
+
+listen_udp = "0.0.0.0:53"
+listen_tcp = "0.0.0.0:53"
+
+upstream = "1.1.1.1:53"
+upstream_doh = "https://dns.cloudflare.com/dns-query"
+
+# "zero" (0.0.0.0) | "nxdomain" | "refused"
+block_mode = "zero"
+
+blocklists = [
+    "/opt/dnsblock/blocklists/hosts.txt",
+    "/opt/dnsblock/blocklists/adguard.txt",
+    "/opt/dnsblock/blocklists/youtube.txt",
+]
+allowlists = []
+
+# Web-UI/Dashboard (im Container nach außen gemappt)
+admin_listen = "0.0.0.0:8080"
+
+uplink_test_servers = ["1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"]
+
+# Remote-Listen (Dashboard /setup verwaltet die Auswahl)
+fetch_remote = true
+remote_refresh_hours = 24
+remote_blocklists = [
+    "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
+    "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+]
+data_dir = "/var/lib/dnsblock"
+
+# Root-Hints-Update nur relevant mit lokalem Unbound → aus
+root_hints_update_days = 0

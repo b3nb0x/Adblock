@@ -1,0 +1,23 @@
+[package]
+name = "dnsblock"
+description = "DNS-Sinkhole-Daemon des Rust-DNS-Adblockers (UDP/TCP, Unbound/DoH-Upstream, Web-UI, Uplink-Test, Router-Erkennung)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+filter-engine = { path = "../filter-engine" }
+tokio = { workspace = true }
+hickory-proto = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+
+[[bin]]
+name = "dnsblock"
+path = "src/main.rs"

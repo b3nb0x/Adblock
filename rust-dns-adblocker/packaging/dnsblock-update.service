@@ -1,0 +1,11 @@
+[Unit]
+Description=dnsblock – Update-Prüfung (Debounce 2 Tage im Script)
+Documentation=https://github.com/b3nb0x/Adblock
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dnsblock-update
+Nice=10
+IOSchedulingClass=idle

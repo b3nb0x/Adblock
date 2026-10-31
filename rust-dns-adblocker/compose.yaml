@@ -1,0 +1,28 @@
+# dnsblock – Container-Betreiber-Demo (Update-Modus nutzt dieselbe Struktur)
+# Start:  docker compose up -d --build
+name: dnsblock
+
+services:
+  dnsblock:
+    build: .
+    image: dnsblock:local
+    container_name: dnsblock
+    restart: unless-stopped
+    # Port 53 an Host binden: systemd-resolved-Stub muss ggf. deaktiviert sein
+    # (Installer macht das im Docker-Modus automatisch mit Nachfrage).
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "8080:8080/tcp"
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - dnsblock-data:/var/lib/dnsblock
+    healthcheck:
+      test: ["CMD-SHELL", "dig +short +time=2 +tries=1 @127.0.0.1 example.com || exit 1"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+
+volumes:
+  dnsblock-data:

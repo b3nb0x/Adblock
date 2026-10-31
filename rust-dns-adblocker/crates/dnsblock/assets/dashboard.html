@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnsblock – Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171c23; --panel2: #1e242d; --line: #2a323d;
+    --text: #dbe4ee; --muted: #8b98a8; --green: #46d18f; --red: #ff6b6b;
+    --yellow: #ffd166; --blue: #6ea8fe; --accent: #7ee787;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; padding: 24px; max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px; }
+  header h1 { font-size: 22px; letter-spacing: .5px; }
+  header .hint { color: var(--muted); font-size: 13px; }
+  header nav { margin-left: auto; } header nav a { color: var(--blue); text-decoration: none; margin-left: 14px; font-size: 14px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card .num { font-size: 26px; font-weight: 700; }
+  .card .lbl { color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px; }
+  .sec { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+  .sec h2 { font-size: 15px; margin-bottom: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); word-break: break-all; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  tr:last-child td { border-bottom: 0; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .pill.b { background: rgba(255,107,107,.14); color: var(--red); }
+  .pill.f { background: rgba(70,209,143,.14); color: var(--green); }
+  .pill.x { background: rgba(255,209,102,.14); color: var(--yellow); }
+  .pill.ok { background: rgba(70,209,143,.14); color: var(--green); }
+  .pill.bad { background: rgba(255,107,107,.14); color: var(--red); }
+  .pill.remote { background: rgba(110,168,254,.14); color: var(--blue); }
+  .pill.allow { background: rgba(70,209,143,.14); color: var(--green); }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+  button:hover { border-color: var(--accent); }
+  .kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; font-size: 13.5px; }
+  .kv div:nth-child(odd) { color: var(--muted); }
+  code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+  .warn { color: var(--yellow); font-size: 13px; margin-top: 8px; }
+  a { color: var(--blue); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡 dnsblock</h1>
+  <span class="hint">Rust-DNS-Adblocker · Pi-hole × AdGuard Home</span>
+  <nav><a href="/">Dashboard</a><a href="/setup">Setup</a><a href="/test">Testseite</a><a href="/userscript.js" download>ytd-adskip.user.js</a></nav>
+</header>
+
+<div class="cards" id="cards">
+  <div class="card"><div class="num" id="c_total">–</div><div class="lbl">Anfragen</div></div>
+  <div class="card"><div class="num" id="c_blocked" style="color: var(--red)">–</div><div class="lbl">Geblockt</div></div>
+  <div class="card"><div class="num" id="c_pct">–</div><div class="lbl">Block-Quote</div></div>
+  <div class="card"><div class="num" id="c_engine">–</div><div class="lbl">Regeln aktiv</div></div>
+  <div class="card"><div class="num" id="c_failed" style="color: var(--yellow)">–</div><div class="lbl">Fehlgeschlagen</div></div>
+</div>
+
+<div class="sec">
+  <h2>Uplink-Test</h2>
+  <div class="row" style="margin-bottom: 10px">
+    <button id="btn_uplink">↻ Jetzt testen</button>
+    <span class="muted" id="uplink_hint">Testet alle 3 s parallel: eigener Upstream + Public-Resolver.</span>
+  </div>
+  <table><thead><tr><th>Server</th><th>RTT</th><th>Status</th><th>Ergebnis</th></tr></thead><tbody id="uplink_body"></tbody></table>
+</div>
+
+<div class="sec">
+  <h2>Netzwerk &amp; Router</h2>
+  <div class="kv" id="net_kv">Lade …</div>
+  <div class="warn" id="net_sugg"></div>
+</div>
+
+<div class="sec">
+  <h2>Geladene Listen</h2>
+  <table><thead><tr><th>Quelle</th><th>Typ</th><th>Einträge</th></tr></thead><tbody id="lists_body"></tbody></table>
+</div>
+
+<div class="sec">
+  <h2>Query-Log (letzte, RAM-only)</h2>
+  <table><thead><tr><th>Zeit</th><th>Dominäne</th><th>Aktion</th></tr></thead><tbody id="log_body"></tbody></table>
+</div>
+
+<div class="sec">
+  <h2>Konfiguration</h2>
+  <div class="kv" id="cfg_kv"></div>
+  <p class="muted" style="margin-top:8px">Query-Log lebt nur im RAM (kein Schreiben auf Datenträger, DSGVO-friendly). Neustart = gelöschte Log.</p>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const fmtPct = p => p.toFixed(1) + " %";
+const fmtTs = ts => { const d = new Date(ts); return d.toLocaleTimeString("de-DE"); };
+async function jf(url, opt) {
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error(url + " → HTTP " + r.status);
+  return r.json();
+}
+
+async function refreshStats() {
+  try {
+    const s = await jf("/api/stats");
+    $("c_total").textContent = fmtInt(s.total);
+    $("c_blocked").textContent = fmtInt(s.blocked);
+    $("c_pct").textContent = fmtPct(s.blocked_percent);
+    $("c_engine").textContent = fmtInt(s.engine_domains);
+    $("c_failed").textContent = fmtInt(s.failed);
+    $("log_body").innerHTML = s.log.slice().reverse().map(e =>
+      `<tr><td class="muted">${fmtTs(e.ts)}</td><td>${esc(e.qname)}</td><td>${
+        e.action === "blocked" ? '<span class="pill b">geblockt</span>' :
+        e.action === "failed" ? '<span class="pill x">fehler</span>' :
+        '<span class="pill f">weitergeleitet</span>'}</td></tr>`).join("");
+    $("cfg_kv").innerHTML =
+      `<div>Block-Modus</div><div><code>${esc(s.block_mode)}</code></div>` +
+      `<div>Upstream</div><div><code>${esc(s.upstream)}</code></div>`;
+  } catch (e) { console.error(e); }
+}
+function fmtInt(n) { return Number(n).toLocaleString("de-DE"); }
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+
+async function loadNetwork() {
+  try {
+    const n = await jf("/api/network");
+    const val = v => v ?? "unbekannt";
+    const rows = [
+      ["Lokale IP", val(n.local_ip)], ["Interface", val(n.iface)],
+      ["Maske", val(n.netmask)], ["Gateway (Router)", val(n.gateway)],
+      ["Router-MAC", val(n.gateway_mac)], ["Hersteller", val(n.vendor)],
+    ];
+    $("net_kv").innerHTML = rows.map(([k, v]) => `<div>${k}</div><div><code>${esc(v)}</code></div>`).join("");
+    if (n.suggestion) {
+      const s = n.suggestion;
+      $("net_sugg").innerHTML =
+        `💡 <b>${esc(s.vendor)}</b>: In der Router-Oberfläche unter <code>${esc(s.path)}</code> den DNS-Server auf ` +
+        `<code>${esc(s.dns_to_set)}</code> setzen (Router: <code>${esc(s.router_ip)}</code>). ${esc(s.note)}`;
+    }
+  } catch (e) { $("net_kv").innerHTML = `<div></div><div class="muted">Netzwerk­er­ken­nung nicht verfügbar: ${esc(String(e))}</div>`; }
+}
+
+async function loadUplink() {
+  try {
+    const r = await jf("/api/uplink/last");
+    renderUplink(r.results);
+  } catch (e) { console.error(e); }
+}
+function renderUplink(results) {
+  $("uplink_body").innerHTML = (results ?? []).map(r => {
+    const status = r.error ? esc(r.error) : r.rcode;
+    const pill = r.ok ? '<span class="pill ok">OK</span>' : '<span class="pill bad">fehlt</span>';
+    const rtt = r.ms >= 0 ? r.ms + " ms" : "–";
+    return `<tr><td><code>${esc(r.server)}</code></td><td>${rtt}</td><td>${pill}</td><td class="muted">${status}</td></tr>`;
+  }).join("") || '<tr><td colspan="4" class="muted">Noch kein Test gelaufen.</td></tr>';
+}
+$("btn_uplink").addEventListener("click", async () => {
+  $("btn_uplink").disabled = true;
+  try { renderUplink((await jf("/api/uplink")).results); } finally { $("btn_uplink").disabled = false; }
+});
+
+async function loadLists() {
+  try {
+    const r = await jf("/api/lists");
+    $("lists_body").innerHTML = (r.lists ?? []).map(l =>
+      `<tr><td>${esc(l.name)}</td><td><span class="pill ${l.kind}">${l.kind}</span></td><td>${fmtInt(l.domains)}</td></tr>`).join("");
+  } catch (e) { console.error(e); }
+}
+
+refreshStats(); setInterval(refreshStats, 5000);
+loadNetwork(); loadUplink(); loadLists();
+</script>
+</body>
+</html>

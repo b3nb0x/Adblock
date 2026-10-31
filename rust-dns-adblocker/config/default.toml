@@ -1,0 +1,55 @@
+# dnsblock – Konfiguration (Profil: Unbound-kaskadiert, wie Phase 1)
+# Produktion: Ports auf 53 setzen (benötigt root oder CAP_NET_BIND_SERVICE),
+# Web-UI ggf. auf 0.0.0.0 freigeben, wenn Verbraucher im LAN zugreifen sollen.
+
+# Lauschende Adressen des DNS-Sinkholes
+listen_udp = "127.0.0.1:5300"
+listen_tcp = "127.0.0.1:5300"
+
+# Upstream: lokales Unbound (rekursiv, DNSSEC-validierend), z. B.:
+#   server:
+#       interface: 127.0.0.1
+#       port: 5353
+#       root-hints: "/var/lib/unbound/root.hints"
+#       auto-trust-anchor-file: "/var/lib/unbound/root.key"
+upstream = "127.0.0.1:5353"
+
+# Antwort für Block-Treffer: "zero" (0.0.0.0, Pi-hole-artig),
+# "nxdomain" oder "refused"
+block_mode = "zero"
+
+# Listen (hosts-, Domänen- oder AdGuard-Format, gemischt)
+blocklists = [
+    "blocklists/hosts.txt",
+    "blocklists/adguard.txt",
+    "blocklists/youtube.txt",
+]
+allowlists = []
+
+# Root-Hints-Auto-Update alle N Tage (0 = deaktiviert, Standard: 4)
+root_hints_update_days = 4
+
+# ---------- Web-UI / REST (Dashboard, Testseite, APIs) ----------
+admin_listen = "127.0.0.1:8080"
+
+# ---------- Uplink-Diagnostik ----------
+# Wird beim Start getestet + im Dashboard auf Knopfdruck; eigener Upstream
+# wird automatisch vorne angestellt.
+uplink_test_servers = ["1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"]
+
+# ---------- Remote-Listen (HTTPS-Fetch + Hot-Reload) ----------
+fetch_remote = true
+remote_refresh_hours = 24
+# Cache liegt unter data/remote/<fnv64-hash>.txt (atomar geschrieben).
+# Bei Ausfall des Fetches bleibt der letzte Cache aktiv (fail-closed).
+remote_blocklists = [
+    "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
+    "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt",
+]
+
+# Verzeichnis für Remote-Cache/Status
+data_dir = "data"
+
+# ---------- Optionaler DoH-Upstream (bevorzugt, UDP/TCP = Failover) ----------
+# Beispiel: upstream_doh = "https://dns.cloudflare.com/dns-query"
+upstream_doh = ""

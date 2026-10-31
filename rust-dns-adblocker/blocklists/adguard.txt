@@ -1,0 +1,7 @@
+! dnsblock – Beispiel-Blockliste im AdGuard-Format
+! Syntax-Subset: ||domäne^ blockiert Domäne + Subdomänen, @@ = Allow (gewinnt)
+
+||googlesyndication.com^
+||adservice.google.de^
+||ad.doubleclick.example.invalid^
+@@||stat.allowed-partner.example^

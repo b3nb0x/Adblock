@@ -1,0 +1,30 @@
+# dnsblock – Konfiguration (Profil: Public-Upstream + DoH, AdGuard-Style)
+# Standalone-Variante ohne Unbound: DoH bevorzugt, UDP als Failover.
+# Für :53-Produktion -> root oder CAP_NET_BIND_SERVICE.
+
+listen_udp = "0.0.0.0:53"
+listen_tcp = "0.0.0.0:53"
+
+upstream = "1.1.1.1:53"
+upstream_doh = "https://dns.cloudflare.com/dns-query"
+
+block_mode = "nxdomain"
+
+blocklists = [
+    "blocklists/hosts.txt",
+    "blocklists/adguard.txt",
+    "blocklists/youtube.txt",
+]
+allowlists = []
+
+admin_listen = "0.0.0.0:8080"
+
+uplink_test_servers = ["1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53", "94.140.14.14:53"]
+
+fetch_remote = true
+remote_refresh_hours = 24
+remote_blocklists = [
+    "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
+    "https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt",
+]
+data_dir = "data"

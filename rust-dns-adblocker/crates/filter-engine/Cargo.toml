@@ -1,0 +1,8 @@
+[package]
+name = "filter-engine"
+description = "Blocklisten-Engine: hosts-Format, Domain-Listen, AdGuard-Syntax-Subset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

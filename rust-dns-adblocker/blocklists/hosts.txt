@@ -1,0 +1,32 @@
+# dnsblock – Basis-Blockliste (hosts-Format, eine Domain pro Zeile)
+# Herstellersuchte Werbe-/Tracker-Netzwerke: Cross-vendor, Playback-sicher.
+0.0.0.0 doubleclick.net
+0.0.0.0 adservice.google.com
+0.0.0.0 googlesyndication.com
+0.0.0.0 googleadservices.com
+0.0.0.0 googletagservices.com
+0.0.0.0 2mdn.net
+0.0.0.0 adnxs.com
+0.0.0.0 adsrvr.org
+0.0.0.0 rubiconproject.com
+0.0.0.0 pubmatic.com
+0.0.0.0 openx.net
+0.0.0.0 casalemedia.com
+0.0.0.0 criteo.com
+0.0.0.0 criteo.net
+0.0.0.0 adform.net
+0.0.0.0 taboola.com
+0.0.0.0 outbrain.com
+0.0.0.0 smartadserver.com
+0.0.0.0 scorecardresearch.com
+0.0.0.0 quantserve.com
+0.0.0.0 moatads.com
+0.0.0.0 moatad.com
+0.0.0.0 imrworldwide.com
+0.0.0.0 zedo.com
+0.0.0.0 teads.tv
+0.0.0.0 amazon-adsystem.com
+0.0.0.0 adcolony.com
+0.0.0.0 applovin.com
+0.0.0.0 chartboost.com
+0.0.0.0 yieldmo.com

@@ -1,0 +1,33 @@
+[Unit]
+Description=dnsblock – Rust DNS Adblocker (Pi-hole × AdGuard Home)
+Documentation=https://github.com/b3nb0x/Adblock
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Dynamischer Benutzer ohne festen Account; StateDirectory legt
+# /var/lib/dnsblock an und übereignet es dem Prozess-Owner.
+DynamicUser=yes
+StateDirectory=dnsblock
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/dnsblock /etc/dnsblock/config.toml
+
+# Port 53 als nicht-privilegierter Prozess
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Härtung
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Der Daemon behandelt SIGINT als sauberes Herunterfahren (Query-Log-Summary)
+KillSignal=SIGINT
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnsblock – Werbetestseite</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c23; --panel2:#1e242d; --line:#2a323d; --text:#dbe4ee; --muted:#8b98a8; --green:#46d18f; --red:#ff6b6b; --yellow:#ffd166; --blue:#6ea8fe; --accent:#7ee787; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:15px/1.55 system-ui, sans-serif; padding:24px; max-width:1000px; margin:0 auto; }
+  header { display:flex; align-items:baseline; gap:16px; margin-bottom:18px; }
+  header h1 { font-size:22px; } header nav { margin-left:auto; } header nav a { color:var(--blue); text-decoration:none; font-size:14px; margin-left:14px; }
+  .sec { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:18px; }
+  h2 { font-size:15px; color:var(--accent); text-transform:uppercase; letter-spacing:.6px; margin-bottom:10px; }
+  p { margin: 8px 0; }
+  .muted { color:var(--muted); }
+  code { background:var(--panel2); padding:1px 6px; border-radius:5px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th,td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); word-break:break-all; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; }
+  .pill.ok { background:rgba(70,209,143,.14); color:var(--green); }
+  .pill.no { background:rgba(255,107,107,.14); color:var(--red); }
+  .pill.warn { background:rgba(255,209,102,.14); color:var(--yellow); }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13.5px; }
+  button:disabled { opacity:.5; cursor:default; }
+  nav.steps { counter-reset: item; }
+  nav.steps li { margin-left: 18px; margin-bottom: 4px; }
+  .summary { font-size:13.5px; margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 Werbetestseite</h1>
+  <nav><a href="/">← Dashboard</a><a href="/setup">Setup</a></nav>
+</header>
+
+<div class="sec">
+  <h2>Wie du wirklich testest</h2>
+  <p>Die Testseite hat zwei Ebenen:</p>
+  <ol class="steps muted">
+    <li><b style="color:var(--text)">Direkt-Antwort der Filter-Engine</b> (nicht abhängig von der Systemkonfiguration) – Abschnitt 1.</li>
+    <li><b style="color:var(--text)">Echter Browser-Ad-Request</b> – funktioniert nur, wenn <b>das Gerät DNS-technisch an dnsblock</b> hängt (Router-Einstellung oder Gerätes-DNS). Abschnitt 2.</li>
+  </ol>
+  <p class="muted">Setup: Router-DNS auf die dnsblock-IP umstellen (Dashboard → „Netzwerk &amp; Router" verrät dir exakt wo) oder das DNS auf deinem Client manuell auf die dnsblock-IP legen und den DNS-Cache leeren.</p>
+</div>
+
+<div class="sec">
+  <h2>1 · Filter-Engine-Direkt-Antwort</h2>
+  <div class="row" style="margin-bottom:10px">
+    <button id="btn_run">↻ Alle prüfen</button>
+    <span class="muted" id="summary">–</span>
+  </div>
+  <table>
+    <thead><tr><th>Domain</th><th>Bedeutung</th><th>Ergebnis</th></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div class="sec">
+  <h2>2 · Echter Ad-Request aus dem Browser</h2>
+  <p class="muted">Diese Seite versuch, echte Werbebilder von den Domains unten zu laden.
+     Es <b>scheitern</b> soll. Sehen alle drei <span class="pill ok">geblockt</span>, antwortet dein DNS korrekt.
+     Falls sogar normale Webseiten nicht mehr laden, ist der DNS falsch congfiguriert (→ Abschnitt 0 zurück).</p>
+  <div id="live"><span class="muted">–</span></div>
+</div>
+
+<div class="sec">
+  <h2>3 · YouTube-Spezifisch</h2>
+  <p>YouTube blockt Werbe-Requests über dieselbe Infrastruktur wie die Videos (<code>googlevideo.com</code>).
+     DNS kann die Videos daher nicht blockieren, ohne das Streaming zu zerstören. Das Begleit-Userscript
+     <a href="/userscript.js"><code>ytd-adskip.user.js</code></a> übernimmt die Clientseite (Ads im Player
+     klicken/überspringen, Werbefelder im Feed ausblenden) – als Vorarbeit hat dnsblock die
+     YT-Werbe-/Tracker-Domains bereits im DNS-Sinkhole.</p>
+  <p class="muted">Aktive YT-Werbedomains erscheinen in der Tabelle oben mit **YT**-Markierung.</p>
+</div>
+
+<script>
+"use strict";
+const PROBES = [
+  ["doubleclick.net", "Google-Anzeige-Tracker (Basis der Display-Ads)", "yt"],
+  ["googlesyndication.com", "AdSense-/YouTube-Anzeige-Frames", "yt"],
+  ["googleadservices.com", "Conversion-/Anzeige-Tracking", "yt"],
+  ["googletagservices.com", "Google Ad Manager Bibliothek", "yt"],
+  ["adservice.google.com", "Google-Anzeigekonserve", "yt"],
+  ["adservice.google.de", "Google-Anzeigekonserve (DE)", "yt"],
+  ["google-analytics.com", "Analytics-Tracker", ""],
+  ["adnxs.com", "AppNexus/Xandr-Anzeigen", ""],
+  ["taboola.com", "Taboola (Empfehlungs-Werbung)", ""],
+  ["outbrain.com", "Outbrain (Empfehlungs-Werbung)", ""],
+  ["criteo.com", "Criteo Retargeting", ""],
+  ["scorecardresearch.com", "Comscore-Zählung", ""],
+  ["ads.youtube.com", "YouTube-Anzeige-Domain", "yt"],
+  ["example.com", "Kontrolle (muss NICHT blockiert sein)", ""],
+];
+
+const $ = id => document.getElementById(id);
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+
+async function probe(d) {
+  const r = await fetch("/api/probe?d=" + encodeURIComponent(d));
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function render(rows) {
+  let blockedCount = 0, openCount = 0, bad = 0, pending = 0;
+  const html = rows.map((row, i) => {
+    const [dom, desc, y] = PROBES[i];
+    if (!row) { pending++; return `<tr><td>${esc(dom)}</td><td class="muted">${esc(desc)}</td><td><span class="pill warn">prüfe…</span></td></tr>`; }
+    const control = dom === "example.com";
+    if (control) {
+      if (row.blocked) { bad++; return `<tr><td>${esc(row.domain)}</td><td class="muted">${esc(desc)}</td><td><span class="pill no">✗ blockiert (Fehler!)</span></td></tr>`; }
+      openCount++;
+      return `<tr><td>${esc(row.domain)}</td><td class="muted">${esc(desc)}</td><td><span class="pill ok">✓ offen (korrekt)</span></td></tr>`;
+    }
+    if (row.blocked) { blockedCount++; return `<tr><td>${esc(row.domain)}</td><td class="muted">${esc(desc)}</td><td><span class="pill ok">✓ geblockt${y ? " · YT" : ""}</span></td></tr>`; }
+    openCount++;
+    return `<tr><td>${esc(row.domain)}</td><td class="muted">${esc(desc)}</td><td><span class="pill no">– offen</span></td></tr>`;
+  }).join("");
+  $("tbody").innerHTML = html;
+  $("summary").textContent =
+    `${blockedCount} geblockt · ${openCount} offen` +
+    (bad ? ` · ⚠ ${bad} Falsch-blockiert!` : " · Kontrolle ✓") +
+    (pending ? ` · ${pending} laufend…` : "");
+}
+
+async function run() {
+  const rows = PROBES.map(() => null);
+  render(rows);
+  await Promise.all(PROBES.map(async ([d], i) => {
+    try { rows[i] = await probe(d); } catch { rows[i] = { domain: d, blocked: false, error: true }; }
+    render(rows);
+  }));
+}
+$("btn_run").addEventListener("click", async () => {
+  $("btn_run").disabled = true;
+  try { await run(); } finally { $("btn_run").disabled = false; }
+});
+
+// === Abschnitt 2: echter Browser-Ad-Request ===
+// Bewusst kein Auto-Load: offline (ohne dnsblock zu testen) würde sonst alles
+// als "geblockt" missinterpretiert.
+const LIVE_TARGETS = ["www.googletagservices.com", "securepubads.g.doubleclick.net", "adservice.google.de"];
+function loadImage(host) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const done = v => { img.onload = img.onerror = null; resolve(v); };
+    img.onload = () => done(true);
+    img.onerror = () => done(false);
+    img.src = "//" + host + "/probe.gif?bx=" + Date.now();
+    setTimeout(() => done(false), 6000);
+  });
+}
+const btnLive = document.createElement("button");
+btnLive.textContent = "↔ Echten Ad-Request starten";
+btnLive.addEventListener("click", async () => {
+  btnLive.disabled = true;
+  $("live").innerHTML = "Läuft…";
+  const out = await Promise.all(LIVE_TARGETS.map(async host => ({
+    host, loaded: await loadImage(host),
+  })));
+  $("live").innerHTML = out.map(r =>
+    r.loaded
+      ? `<p><span class="pill no">✗ geladen!</span> <code>${esc(r.host)}</code> – hier wirkt kein DNS-Blocking (System-DNS falsch?).</p>`
+      : `<p><span class="pill ok">✓ geblockt</span> <code>${esc(r.host)}</code></p>`
+  ).join("");
+  btnLive.disabled = false;
+});
+document.querySelector("#live").appendChild(btnLive);
+
+run();
+</script>
+</body>
+</html>

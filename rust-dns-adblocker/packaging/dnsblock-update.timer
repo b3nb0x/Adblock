@@ -1,0 +1,13 @@
+[Unit]
+Description=dnsblock – täglicher Weckruf für die Update-Prüfung
+Documentation=https://github.com/b3nb0x/Adblock
+
+[Timer]
+# Weckt täglich; das Script selbst debounct auf alle 2 Tage
+# (Stempel-Datei /var/lib/dnsblock/.last_update_check).
+OnCalendar=*-*-* 04:37:00
+RandomizedDelaySec=45min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

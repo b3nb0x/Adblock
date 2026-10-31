@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnsblock – Setup</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c23; --panel2:#1e242d; --line:#2a323d; --text:#dbe4ee; --muted:#8b98a8; --green:#46d18f; --red:#ff6b6b; --yellow:#ffd166; --blue:#6ea8fe; --accent:#7ee787; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:15px/1.55 system-ui, sans-serif; padding:24px; max-width:900px; margin:0 auto; }
+  header { display:flex; align-items:baseline; gap:16px; margin-bottom:18px; }
+  header h1 { font-size:22px; } header nav { margin-left:auto; } header nav a { color:var(--blue); text-decoration:none; font-size:14px; margin-left:14px; }
+  .sec { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:18px; }
+  h2 { font-size:15px; color:var(--accent); text-transform:uppercase; letter-spacing:.6px; margin-bottom:10px; }
+  p, li { margin: 7px 0; } .muted { color:var(--muted); }
+  code { background:var(--panel2); padding:1px 6px; border-radius:5px; font-size:13px; }
+  .item { display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:0; }
+  .item input[type=checkbox] { width:17px; height:17px; margin-top:3px; accent-color:var(--accent); }
+  .item .k { flex:1; }
+  .item b { font-size:14px; } .item .d { color:var(--muted); font-size:13px; }
+  .item .u { font-size:11.5px; color:var(--muted); word-break:break-all; margin-top:2px; }
+  .row { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+  input[type=text] { flex:1; min-width:240px; background:var(--panel2); border:1px solid var(--line); color:var(--text); padding:8px 12px; border-radius:8px; font-size:13.5px; }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--line); padding:9px 16px; border-radius:8px; cursor:pointer; font-size:14px; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#0d1117; font-weight:700; border-color:transparent; }
+  button:disabled { opacity:.5; cursor:default; }
+  .status { margin-top:10px; font-size:13.5px; min-height:20px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; }
+  .pill.ok { background:rgba(70,209,143,.14); color:var(--green); }
+  .pill.no { background:rgba(255,107,107,.14); color:var(--red); }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚙ dnsblock Setup</h1>
+  <nav><a href="/">Dashboard</a><a href="/test">Testseite</a></nav>
+</header>
+
+<div class="sec">
+  <h2>1 · Netzwerk &amp; Router</h2>
+  <div id="netkv" class="muted">lade …</div>
+  <p class="muted" id="nethint" style="margin-top:8px"></p>
+</div>
+
+<div class="sec">
+  <h2>2 · Filterlisten-Auswahl</h2>
+  <p class="muted">Aktivierte Remote-Listen werden per HTTPS geladen, atomar gecacht
+     (<code>data/remote/</code>) und ohne Neustart in die Engine geladen.
+     Eigene Listen (hosts-, Domänen- oder <code>||domäne^</code>-Format) können als URL ergänzt werden.</p>
+  <div id="catalog"><span class="muted">lade …</span></div>
+  <div class="row">
+    <input type="text" id="custom" placeholder="Eigene Liste-URL (https://… .txt mit hosts/Domänen/AdGuard-Format)">
+    <button id="btn_save" class="primary">💾 Speichern &amp; laden</button>
+  </div>
+  <div class="status" id="status"></div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
+let CURRENT = [];
+
+async function jf(url, opt) {
+  const r = await fetch(url, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new (Error)("HTTP " + r.status + " " + (j.error || ""));
+  return j;
+}
+
+async function loadNetwork() {
+  try {
+    const n = await jf("/api/network");
+    const val = v => v ?? "unbekannt";
+    $("netkv").innerHTML =
+      `IP <code>${esc(n.local_ip)}</code> · Interface <code>${esc(n.iface)}</code> · Gateway <code>${esc(n.gateway)}</code>` +
+      (n.vendor ? ` · Hersteller <code>${esc(n.vendor)}</code>` : "");
+    if (n.suggestion) {
+      const s = n.suggestion;
+      $("nethint").innerHTML = `💡 <b>${esc(s.vendor)}</b>: <code>${esc(s.path)}</code> → DNS auf <code>${esc(s.dns_to_set)}</code> setzen. ${esc(s.note)}`;
+    }
+  } catch (e) { $("netkv").textContent = "Netzwerk-Erkennung fehlgeschlagen: " + e; }
+}
+
+async function loadCatalog() {
+  try {
+    const d = await jf("/api/setup");
+    CURRENT = d.selected ?? [];
+    $("catalog").innerHTML = d.catalog.map((c, i) => `
+      <div class="item">
+        <input type="checkbox" data-url="${esc(c.url)}" ${c.selected ? "checked" : ""}>
+        <div class="k">
+          <b>${esc(c.name)}</b>
+          <div class="d">${esc(c.desc)}</div>
+          <div class="u">${esc(c.url)}</div>
+        </div>
+      </div>`).join("");
+    $("status").innerHTML = `Aktuell: <span class="pill ok">${d.selected.length} Listen</span> · ` +
+      `<span class="pill">${fmt(d.engine_domains)} Regeln aktiv</span>` +
+      (d.fetch_remote ? "" : ' <span class="pill no">fetch_remote = false in der config → Auswahl wirkungslos</span>');
+  } catch (e) { $("catalog").textContent = "Katalog-Ladung fehlgeschlagen: " + e; }
+}
+const fmt = n => Number(n).toLocaleString("de-DE");
+
+$("btn_save").addEventListener("click", async () => {
+  const urls = [...document.querySelectorAll("#catalog input:checked")].map(i => i.dataset.url);
+  const custom = $("custom").value.trim();
+  if (custom) urls.push(custom);
+  if (urls.length > 20) { $("status").innerHTML = `<span class="pill no">maximal 20 Listen</span>`; return; }
+  $("btn_save").disabled = true;
+  $("status").textContent = "Lade Listen … (Fetch kann je nach Liste einige Sekunden dauern)";
+  try {
+    const res = await jf("/api/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    });
+    $("custom").value = "";
+    $("status").innerHTML = `<span class="pill ok">✓ ${res.selected.length} Listen activiert</span> — ` +
+      `Engine lädt im Hintergrund neu; <a href="/">Dashboard</a> zeigt live die neue Regel-Anzahl. Danach <a href="/test">Testseite</a> nutzen.`;
+    setTimeout(loadCatalog, 3500);
+  } catch (e) {
+    $("status").innerHTML = `<span class="pill no">✗ ${esc(String(e))}</span>`;
+  } finally { $("btn_save").disabled = false; }
+});
+
+loadNetwork();
+loadCatalog();
+</script>
+</body>
+</html>

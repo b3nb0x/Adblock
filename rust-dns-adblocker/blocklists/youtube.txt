@@ -1,0 +1,19 @@
+! YouTube-Werbemodul (dnsblock) – DNS-seitiger Anteil
+!
+! Blockiert YT-Anzeige-/Tracker-Endpunkte, die SICHER vom Videostream
+! getrennt sind. Absichtlich NICHT enthalten:
+!   googlevideo.com        → DIE Video-Infrastruktur (Ads und Videos gemischt)
+!   youtube.com / m.youtube.com
+!   ytimg.com              → Thumbnails/Player-Assets
+!   googleapis.com / gstatic.com / googleusercontent.com
+!   s.youtube.com          → Video-Statistik (bricht sonst Watch-History)
+!
+! Client-seitiger Anteil: /userscript.js via Dashboard laden.
+
+||doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||googletagservices.com^
+||adservice.google.com^
+||adservice.google.de^
+||ads.youtube.com^
