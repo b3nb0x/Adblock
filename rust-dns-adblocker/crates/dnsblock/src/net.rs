@@ -188,11 +188,15 @@ fn default_route_entry() -> Option<RouteEntry> {
     None
 }
 
-/// Kernel-typische Hex-Darstellung ("C0A80101") in IP umwandeln.
-/// Der u32 ist little-endian gespeichert; Bytes als BE ansehen.
+/// Kernel-typische Hex-Darstellung ("0100000A") in IP umwandeln.
+///
+/// `/proc/net/route` druckt die Felder mit `%08X` als **numerischen** u32 aus:
+/// die Oktette des `__be32` liegen auf Little-Endian-Hosts also gedreht im Wort
+/// (Gateway 10.0.0.1 → "0100000A"). `to_le_bytes` setzt die echte
+/// Oktett-Reihenfolge wieder zusammen.
 pub fn hex_to_ip(hex: &str) -> Option<IpAddr> {
     let word = u32::from_str_radix(hex, 16).ok()?;
-    let [a, b, c, d] = word.to_be_bytes();
+    let [a, b, c, d] = word.to_le_bytes();
     Some(IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
 }
 
@@ -281,18 +285,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hex_to_ip_parses_little_endian_kernel_words() {
+    fn hex_to_ip_parses_kernel_le_printed_words() {
+        // Realer Druck von /proc/net/route auf Little-Endian-Hosts
+        // (Gateway-Feld im Hinweis numerisch verdreht):
         assert_eq!(
-            hex_to_ip("C0A80101").unwrap(),
+            hex_to_ip("0100000A").unwrap(), // live auf dieser Maschine beobachtet
+            "10.0.0.1".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            hex_to_ip("0101A8C0").unwrap(), // Gateway 192.168.1.1
             "192.168.1.1".parse::<IpAddr>().unwrap()
+        );
+        // Netzmaske 255.255.255.0 → FF FF FF 00 → Wort 00FFFFFF:
+        assert_eq!(
+            hex_to_ip("00FFFFFF").unwrap(),
+            "255.255.255.0".parse::<IpAddr>().unwrap()
         );
         assert_eq!(
             hex_to_ip("00000000").unwrap(),
             "0.0.0.0".parse::<IpAddr>().unwrap()
-        );
-        assert_eq!(
-            hex_to_ip("FFFFFF00").unwrap(),
-            "255.255.255.0".parse::<IpAddr>().unwrap()
         );
         assert!(hex_to_ip("xyz").is_none());
     }
