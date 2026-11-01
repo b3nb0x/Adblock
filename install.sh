@@ -224,7 +224,9 @@ acquire_source() {
     fi
 
     local arch; arch="$(arch_name)"
-    if [ -n "$arch" ]; then
+    if [ "$MODE" = "docker" ]; then
+        ok "Docker-Modus: Build läuft im Container – Quellcode statt Release-Binary."
+    elif [ -n "$arch" ]; then
         local rel="$URL_RELEASE_LATEST/dnsblock-linux-${arch}.tar.gz"
         if fetch_to_file "$rel" "$TMPROOT/release.tar.gz" 2>/dev/null; then
             if mkdir -p "$TMPROOT/rel" && tar -xzf "$TMPROOT/release.tar.gz" -C "$TMPROOT/rel" 2>/dev/null; then
@@ -319,20 +321,28 @@ conf_blocklists_paths() { # echo: TOML-Liste der Blocklisten-Pfade
         "$CONF_DIR" "$CONF_DIR" "$CONF_DIR"
 }
 
+install_seed_lists() { # Seed-Blocklisten: kopiert aus der Quelle; Release-Fast-Pfad (OHNE Quellcode): lädt sie von raw
+    mkdir -p "$CONF_DIR/blocklists"
+    for f in hosts.txt adguard.txt youtube.txt; do
+        if [ -n "$RSRC" ] && [ -f "$RSRC/blocklists/$f" ]; then
+            install -m 644 "$RSRC/blocklists/$f" "$CONF_DIR/blocklists/$f"
+        elif ! [ -s "$CONF_DIR/blocklists/$f" ]; then
+            if fetch_to_file "$URL_RAW/rust-dns-adblocker/blocklists/$f" "$CONF_DIR/blocklists/$f" 2>/dev/null; then
+                ok "Seed-Liste geladen: $f"
+            else
+                rm -f "$CONF_DIR/blocklists/$f" 2>/dev/null || true
+                warn "Seed-Liste $f fehlt (Quelle ohne Listen, Download scheiterte) – Remote-Listen (Dashboard) decken das ab."
+            fi
+        fi
+    done
+}
+
 install_files_native() {
     step "Installiere nach $BIN_DIR / $CONF_DIR / $DATA_DIR …"
     mkdir -p "$BIN_DIR" "$CONF_DIR/blocklists" "$DATA_DIR"
     install_bin "$BIN_DIR"
 
-    local missing_lists=0
-    for f in hosts.txt adguard.txt youtube.txt; do
-        if [ -f "$RSRC/blocklists/$f" ]; then
-            install -m 644 "$RSRC/blocklists/$f" "$CONF_DIR/blocklists/$f"
-        else
-            missing_lists=1
-        fi
-    done
-    [ "$missing_lists" = "1" ] && warn "Einige lokale Blocklisten fehlten in der Quelle – Remote-Listen (Dashboard) decken das ab." || true
+    install_seed_lists
 
     if [ ! -f "$CONF_DIR/config.toml" ]; then
         cat > "$CONF_DIR/config.toml" <<EOF
@@ -421,11 +431,7 @@ install_files_user() {
     mkdir -p "$BIN_DIR" "$CONF_DIR/blocklists" "$DATA_DIR" || die "Verzeichnisse"
     install_bin "$BIN_DIR"
 
-    for f in hosts.txt adguard.txt youtube.txt; do
-        if [ -f "$RSRC/blocklists/$f" ]; then
-            install -m 644 "$RSRC/blocklists/$f" "$CONF_DIR/blocklists/$f"
-        fi
-    done
+    install_seed_lists
 
     if [ ! -f "$CONF_DIR/config.toml" ]; then
         cat > "$CONF_DIR/config.toml" <<EOF
