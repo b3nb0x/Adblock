@@ -1,0 +1,5 @@
+
+# Release-Artefakte (liegen als Assets am GitHub-Release, nicht im Repo)
+/rust-dns-adblocker-*.tar.gz
+/dnsblock-linux-*.tar.gz
+/rust-dns-adblocker-*-musl
