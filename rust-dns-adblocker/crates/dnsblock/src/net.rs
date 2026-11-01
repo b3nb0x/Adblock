@@ -79,6 +79,11 @@ impl NetworkInfo {
                 "WAN > Internet connection > WAN DNS Setting",
                 "DNS Server 1 auf dnsblock-IP setzen.",
             ),
+            Some("MikroTik (RouterOS)") => (
+                "MikroTik (RouterOS)",
+                "WebFig/WinBox: IP > DHCP Server > <Server> > Network > DNS Servers",
+                "DNS-Server auf dnsblock-IP setzen; Geräte mit hartem DNS per DNS-Weiterleitung rudern: /ip firewall nat → chain=dstnat, dst-port=53 (udp+tcp), action=redirect.",
+            ),
             Some(v) => (
                 v,
                 "Weboberfläche > LAN/DHCP > DNS-Server",
@@ -246,6 +251,14 @@ const VENDOR_TABLE_ENTRIES: &[([u8; 3], &str)] = &[
     ([0x0C, 0x27, 0x24], "TP-Link"),
     ([0x04, 0xD9, 0xF5], "ASUS"),
     ([0xAC, 0x9E, 0x17], "ASUS"),
+    // MikroTik/Routerboard (via macvendors geprüft, 2026-11):
+    ([0x78, 0x9A, 0x18], "MikroTik (RouterOS)"),
+    ([0x48, 0x8F, 0x5A], "MikroTik (RouterOS)"),
+    ([0x2C, 0xC8, 0x1B], "MikroTik (RouterOS)"),
+    ([0x64, 0xD1, 0x54], "MikroTik (RouterOS)"),
+    ([0xB8, 0x69, 0xF4], "MikroTik (RouterOS)"),
+    ([0xCC, 0x2D, 0xE0], "MikroTik (RouterOS)"),
+    ([0xD4, 0xCA, 0x6D], "MikroTik (RouterOS)"),
     ([0xF0, 0x9F, 0xC2], "Ubiquiti"),
     ([0x24, 0x5A, 0x4C], "Ubiquiti"),
 ];
@@ -313,6 +326,11 @@ mod tests {
         assert_eq!(mac_vendor("34:31:c4:aa:bb:cc"), Some("AVM (FRITZ!Box)"));
         assert_eq!(mac_vendor("34:31:C4:aa:bb:cc"), Some("AVM (FRITZ!Box)"));
         assert_eq!(mac_vendor("AC:9E:17:11:22:33"), Some("ASUS"));
+        assert_eq!(
+            mac_vendor("78:9A:18:de:ad:0f"),
+            Some("MikroTik (RouterOS)")
+        );
+        assert_eq!(mac_vendor("48:8f:5a:00:11:22"), Some("MikroTik (RouterOS)"));
         assert_eq!(mac_vendor("00:11:22:33:44:55"), None);
         assert_eq!(mac_vendor("keine mac"), None);
     }
