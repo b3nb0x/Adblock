@@ -101,7 +101,7 @@ ask_yn() { # $1=default(y|n) $2=prompt → Exit-Status 0 wenn ja
 }
 
 normalize_mode() {
-    case "$1" in pi) printf 'pi';; docker) printf 'docker';; user) printf 'user';; *) printf 'server';; esac
+    case "$1" in pi) printf 'pi';; docker) printf 'docker';; user) printf 'user';; openwrt) printf 'openwrt';; *) printf 'server';; esac
 }
 
 arch_name() {
@@ -160,6 +160,18 @@ install_paths() {
     if [ "$(id -u)" = "0" ]; then IS_ROOT=1; else IS_ROOT=0; fi
     if [ -d /run/systemd/system ] && have systemctl; then HAVE_SD=1; else HAVE_SD=0; fi
 
+    if [ "$MODE" = "openwrt" ] && [ "$IS_ROOT" = "1" ] && openwrt_detected; then
+        # OpenWrt (busybox/procd, kein systemd): Daten auf /etc/dnsblock,
+        # Port 5353 statt 53 (dhcnasq belegt :53).
+        BIN_DIR="/usr/bin"
+        CONF_DIR="/etc/dnsblock"
+        DATA_DIR="$CONF_DIR/data"
+        UNIT_DIR=""
+        UPDATE_BIN="$BIN_DIR/dnsblock-update"
+        SD_UNIT=0
+        [ "$PORT" = "53" ] && PORT="5353"
+        return 0
+    fi
     if [ "$IS_ROOT" = "1" ]; then
         BIN_DIR="/usr/local/bin"
         CONF_DIR="/etc/dnsblock"
@@ -190,7 +202,9 @@ install_paths() {
 choose_mode() {
     if [ -n "$MODE" ]; then return 0; fi
     if [ "$NONINT" = "1" ] || [ ! -r /dev/tty ]; then
-        MODE="$(normalize_mode "${ADBLOCK_MODE:-server}")"
+        local def=server
+        openwrt_detected && def="openwrt"
+        MODE="$(normalize_mode "${ADBLOCK_MODE:-$def}")"
         warn "Nicht-interaktiv: Modus '${MODE}' (per ADBLOCK_MODE änderbar)."
         return 0
     fi
@@ -198,14 +212,16 @@ choose_mode() {
         printf '\n  %sdnsblock Installer%s – Installationsmodus wählen:\n\n' "$C_B" "$C_0"
         printf '    1) Server   (VM, NAS, root-Server – systemd-Dienst)\n'
         printf '    2) Raspberry Pi / ARM-Gerät (systemd-Dienst)\n'
-        printf '    3) Docker / Docker Compose (Container, kein Host-Rust nötig)\n\n'
-        printf '    Auswahl [1-3, Standard=1]: '
+        printf '    3) Docker / Docker Compose (Container, kein Host-Rust nötig)\n'
+        printf '    4) OpenWrt-Gerät (alter Router, procd + dnsmasq-Verkabelung)\n\n'
+        printf '    Auswahl [1-4, Standard=1]: '
     } > /dev/tty
     local c=""
     if IFS= read -r c < /dev/tty; then :; else c=""; fi
     case "$(printf '%s' "${c:-1}" | tr -d '[:space:]')" in
         2) MODE="pi" ;;
         3) MODE="docker" ;;
+        4) MODE="openwrt" ;;
         *) MODE="server" ;;
     esac
 }
@@ -238,6 +254,13 @@ acquire_source() {
                 fi
             fi
         fi
+    fi
+
+    if [ "$MODE" = "openwrt" ]; then
+        # OpenWrt-Boxen können nicht selbst bauen (RAM/CPU/Flash) –
+        # ohne passendes Release-Binary gibt es hier keinen Weg.
+        [ -n "$PREBUILT" ] || die "Kein Release-Binary für $(uname -m) (arch '$arch') – OpenWrt-Boxen bauen nicht selbst. Prüfe die veröffentlichten Assets (dnsblock-linux-<arch>.tar.gz)."
+        return 0
     fi
 
     step "Lade Quellcode: $URL_TARBALL"
@@ -474,6 +497,122 @@ install_files_docker() {
     ok "Compose-Datei: $COMPOSE_FILE  (Baumaterial: $DOCKER_SRC)"
 }
 
+# ---------------------------------------------------------------------------
+# OpenWrt (alter Router): procd + dnsmasq-Verkabelung, Update via busybox-cron
+# ---------------------------------------------------------------------------
+openwrt_detected() { [ -f /etc/openwrt_release ]; }
+
+is_openwrt() { [ "$MODE" = "openwrt" ]; }
+
+openwrt_mem_guard() {
+    local kib; kib="$(awk '/^MemAvailable:/{print $2; exit}' /proc/meminfo 2>/dev/null)"
+    case "$kib" in ''|*[!0-9]*) kib=0 ;; esac
+    local mb=$((kib / 1024))
+    if [ "$mb" -lt 32 ]; then
+        die "Nur ${mb} MB freier RAM – die dnsblock-Engine (260k+ Domänen) braucht ~40 MB+. Alternative: wenige kompakte Listen wählen oder stärkeres Gerät (extroot)."
+    fi
+    [ "$mb" -lt 64 ] && warn "Nur ${mb} MB freier RAM – im Setup-Panel auf wenige kompakte Listen beschränken." || true
+}
+
+install_files_openwrt() {
+    step "OpenWrt-Installation nach $BIN_DIR / $CONF_DIR …"
+    mkdir -p "$BIN_DIR" "$CONF_DIR/blocklists" "$DATA_DIR" || die "Verzeichnisse"
+    install_bin "$BIN_DIR"
+    install_seed_lists
+
+    if [ ! -f "$CONF_DIR/config.toml" ]; then
+        cat > "$CONF_DIR/config.toml" <<EOF
+# dnsblock – OpenWrt (dnsmasq leitet auf 127.0.0.1#$PORT weiter)
+listen_udp = "127.0.0.1:$PORT"
+listen_tcp = "127.0.0.1:$PORT"
+upstream = "1.1.1.1:53"
+upstream_doh = ""
+block_mode = "zero"
+blocklists = [
+    $(conf_blocklists_paths)
+]
+allowlists = []
+admin_listen = "0.0.0.0:$ADMIN_PORT"
+uplink_test_servers = ["1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"]
+fetch_remote = true
+remote_refresh_hours = 24
+remote_blocklists = [
+    "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt",
+    "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+]
+data_dir = "$DATA_DIR"
+root_hints_update_days = 0
+EOF
+        ok "Konfiguration erzeugt: $CONF_DIR/config.toml"
+    else
+        ok "Bestehende Konfiguration wird behalten: $CONF_DIR/config.toml"
+    fi
+
+    # procd-Dienst (eternales Autostart via rc)
+    cat > /etc/init.d/dnsblock <<'INITEOF'
+#!/bin/sh /etc/rc.common
+# dnsblock – OpenWrt-Dienst (procd), vom Installer erzeugt
+START=95
+STOP=10
+USE_PROCD=1
+
+start_service() {
+    procd_open_instance dnsblock
+    procd_set_param command /usr/bin/dnsblock /etc/dnsblock/config.toml
+    procd_set_param respawn 3600 5 5
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+}
+INITEOF
+    chmod 755 /etc/init.d/dnsblock || die "init.d-Schreibrechte fehlgeschlagen"
+    ok "procd-Dienst: /etc/init.d/dnsblock"
+
+    # Update-System: Script (48 h-Debounce innen) + update.conf + cron
+    if fetch_to_file "$URL_RAW/rust-dns-adblocker/packaging/dnsblock-update.sh" "$UPDATE_BIN" 2>/dev/null; then
+        chmod 755 "$UPDATE_BIN"
+        ok "Update-Script: $UPDATE_BIN"
+    else
+        warn "dnsblock-update.sh nicht ladbar – Auto-Update bleibt unkonfiguriert."
+    fi
+    cat > "$CONF_DIR/update.conf" <<EOF
+# Update-Einstellungen: täglich via cron (04:00), 48 h-Debounce im Script
+AUTO_UPDATE=yes
+MODE=openwrt
+EOF
+
+    install -m 644 "$0" "$CONF_DIR/install.sh" 2>/dev/null \
+        || warn "Installer nach $CONF_DIR/install.sh zu spiegeln fehlgeschlagen." || true
+    ok "Installer-Cache: $CONF_DIR/install.sh"
+}
+
+openwrt_wire_dnsmasq() {
+    if [ "$PORT" = "53" ]; then
+        warn "OpenWrt: Port 53 kollidiert mit dnsmasq – Verkabelung übersprungen (dnsblock lauscht direkt :53; dnsmasq-DNS muss dann deaktiviert sein)."
+        return 0
+    fi
+    if ! have uci || ! [ -f /etc/init.d/dnsmasq ]; then
+        warn "uci/dnsmasq nicht gefunden – Verkabelung manuell: /etc/config/dhcp → noresolv='1', server='127.0.0.1#$PORT'."
+        return 0
+    fi
+    if uci set dhcp.@dnsmasq[0].noresolv='1' 2>/dev/null \
+        && uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#$PORT" 2>/dev/null \
+        && uci commit dhcp 2>/dev/null; then
+        /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+        ok "dnsmasq verkabelt: LAN-DNS (:53) → dnsblock (127.0.0.1#$PORT)."
+        return 0
+    fi
+    warn "uci-DHCP-Anpassung scheiterte – manuell: noresolv='1', server='127.0.0.1#$PORT' (dhcp.@dnsmasq[0])."
+}
+
+openwrt_cron() {
+    grep -q 'dnsblock-update' /etc/crontabs/root 2>/dev/null \
+        || printf '0 4 * * * %s\n' "$UPDATE_BIN" >> /etc/crontabs/root 2>/dev/null \
+        || warn "Crontab-Eintrag fehlgeschlagen – manuell: siehe README (OpenWrt)."
+    /etc/init.d/cron restart >/dev/null 2>&1 || true
+    ok "Auto-Update: täglich 04:00 (cron) mit 48 h-Debounce im Script."
+}
+
 build_docker() {
     have docker || die "Docker fehlt – bitte Docker Engine installieren (docs.docker.com/engine)."
     if docker compose version >/dev/null 2>&1; then DC="docker compose";
@@ -534,6 +673,19 @@ start_service() {
         ok "Container läuft."
         return 0
     fi
+    if [ "$IS_ROOT" = "1" ] && openwrt_detected && [ -x /etc/init.d/dnsblock ]; then
+        step "Aktiviere procd-Dienst …"
+        /etc/init.d/dnsblock enable 2>/dev/null || true
+        /etc/init.d/dnsblock restart 2>/dev/null || /etc/init.d/dnsblock start \
+            || die "procd-Start fehlgeschlagen (logread -e dnsblock | tail)"
+        sleep 2
+        if /etc/init.d/dnsblock status 2>/dev/null | grep -qi running; then
+            ok "procd-Dienst läuft (autostartet nach Boot)."
+        else
+            warn "procd-Status: $(/etc/init.d/dnsblock status 2>/dev/null) – logread -e dnsblock | tail"
+        fi
+        return 0
+    fi
     if [ "$IS_ROOT" = "1" ] && [ "$SD_UNIT" = "1" ] && [ -f "$UNIT_DIR/dnsblock.service" ]; then
         step "Aktiviere systemd-Dienst …"
         systemctl enable --now dnsblock.service 2>&1 | sed 's/^/   /' || true
@@ -563,6 +715,10 @@ start_service() {
 }
 
 restart_service() {
+    if [ "$IS_ROOT" = "1" ] && openwrt_detected && [ -x /etc/init.d/dnsblock ]; then
+        /etc/init.d/dnsblock restart 2>/dev/null || /etc/init.d/dnsblock start || return 1
+        return 0
+    fi
     if [ "$MODE" = "docker" ]; then
         if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
         ( cd "$DOCKER_DIR" && $DC -f "$COMPOSE_FILE" up -d ) || return 1
@@ -618,6 +774,22 @@ PYEOF
 }
 
 dns_answer() { # $1=domain $2=port → 0.0.0.0 | NXDOMAIN | IP | FAIL
+    if is_openwrt; then
+        # OpenWrt: kein dig/python3 – busybox nslookup über den verkabelten
+        # dnsmasq (:53 → dnsblock :$PORT) = echter Ende-zu-Ende-Test.
+        # Antwortzeilen heißen "Address 1: 0.0.0.0 name" (Server-Zeile ist
+        # "Address:   127.0.0.1:53" ohne laufende Nummer).
+        local out ip
+        out="$(nslookup "$1" 127.0.0.1 2>&1)"
+        if printf '%s\n' "$out" | grep -q '0\.0\.0\.0'; then printf '0.0.0.0'; return 0; fi
+        if printf '%s\n' "$out" | grep -qi 'NXDOMAIN\|can.t find'; then printf 'NXDOMAIN'; return 0; fi
+        ip="$(printf '%s\n' "$out" \
+            | sed -n 's/.*[Aa]ddress[[:space:]][0-9][0-9]*: \([0-9a-fA-F:.]*\).*/\1/p' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -v '^127\.' | head -1)"
+        if [ -n "$ip" ]; then printf '%s' "$ip"; return 0; fi
+        printf 'FAIL'; return 0
+    fi
     if have dig; then
         local out st ip
         out="$(dig +time=3 +tries=1 +noall +answer +comments @127.0.0.1 -p "$2" "$1" A 2>&1)"
@@ -653,7 +825,13 @@ self_test() { # $1=dns-port $2=admin-port
     step "Selbsttest …"
 
     # 1) Prozess
-    if [ "$MODE" = "docker" ]; then
+    if is_openwrt; then
+        if [ -x /etc/init.d/dnsblock ] && /etc/init.d/dnsblock status 2>/dev/null | grep -qi running; then
+            verdict 1 "procd-Dienst läuft" "/etc/init.d/dnsblock status"
+        else
+            verdict 0 "procd-Dienst läuft nicht" "logread -e dnsblock | tail"
+        fi
+    elif [ "$MODE" = "docker" ]; then
         if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
         if ( cd "$DOCKER_DIR" && $DC -f "$COMPOSE_FILE" ps 2>/dev/null | grep -q dnsblock ); then
             verdict 1 "Docker-Container läuft" "compose ps"
@@ -676,7 +854,7 @@ self_test() { # $1=dns-port $2=admin-port
     fi
 
     # 2) DNS-Filter: Ads MUSS geblockt werden
-    make_pyprobe
+    is_openwrt || make_pyprobe
     res="$(dns_answer doubleclick.net "$1")"
     if is_blocked_answer "$res"; then
         verdict 1 "DNS-Filter: doubleclick.net geblockt" "$res"
@@ -730,7 +908,25 @@ do_uninstall() {
         [ "$KEEP_DATA" = "1" ] && wipe=0 || wipe=1
     fi
 
-    if [ "$MODE" = "docker" ]; then
+    if is_openwrt; then
+        if [ -x /etc/init.d/dnsblock ]; then
+            /etc/init.d/dnsblock stop 2>/dev/null || true
+            /etc/init.d/dnsblock disable 2>/dev/null || true
+            rm -f /etc/init.d/dnsblock
+        fi
+        # dnsmasq-Rückrollung (Verkabelung rückgängig)
+        if have uci && [ -f /etc/init.d/dnsmasq ]; then
+            uci del_list dhcp.@dnsmasq[0].server="127.0.0.1#$PORT" 2>/dev/null || true
+            uci set dhcp.@dnsmasq[0].noresolv='0' 2>/dev/null || true
+            uci commit dhcp 2>/dev/null || true
+            /etc/init.d/dnsmasq restart 2>/dev/null || true
+        fi
+        if [ -f /etc/crontabs/root ]; then
+            sed -i '/dnsblock-update/d' /etc/crontabs/root 2>/dev/null || true
+            /etc/init.d/cron restart 2>/dev/null || true
+        fi
+        rm -f "$BIN_DIR/dnsblock" "$UPDATE_BIN" 2>/dev/null || true
+    elif [ "$MODE" = "docker" ]; then
         if [ -f "$COMPOSE_FILE" ]; then
             if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
             if [ "$wipe" = "1" ]; then ( cd "$DOCKER_DIR" && $DC -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null ) || true;
@@ -775,6 +971,10 @@ main() {
         [ -n "$_m" ] && MODE="$(normalize_mode "$_m")"
     fi
 
+    # Pfade anhand des finalen Modus neu berechnen (install_paths lief früher
+    # als choose_mode; u. a. OpenWrt-Rewrite: Port 53→5353, /usr/bin, procd).
+    install_paths
+
     step "Modus: $MODE (root: $IS_ROOT, systemd: $HAVE_SD)"
     acquire_source
 
@@ -784,6 +984,17 @@ main() {
             handle_resolved
             build_docker
             start_service
+            ;;
+        openwrt)
+            openwrt_mem_guard
+            install_files_openwrt
+            openwrt_wire_dnsmasq
+            openwrt_cron
+            if [ "$UPDATE" = "1" ]; then
+                restart_service || die "Neustart fehlgeschlagen – logread -e dnsblock | tail"
+            else
+                start_service
+            fi
             ;;
         server|pi|user)
             build_native
@@ -834,6 +1045,11 @@ PYEOF
         printf '%s\n' "   Logs:                     docker compose -f $COMPOSE_FILE logs -f"
         printf '%s\n' "   Update (Container):       bash $0 --update --mode docker"
         printf '%s\n' "   Deinstall:                bash $0 --uninstall --mode docker"
+    elif is_openwrt; then
+        printf '%s\n' "   Logs:                     logread -e dnsblock | tail"
+        printf '%s\n' "   Update-Check:             täglich 04:00 (cron), 48 h-Debounce"
+        printf '%s\n' "   Manuelles Update:         $UPDATE_BIN --force"
+        printf '%s\n' "   Deinstall:                bash $0 --uninstall"
     elif [ "$IS_ROOT" = "1" ]; then
         printf '%s\n' "   Logs:                     journalctl -u dnsblock -f"
         printf '%s\n' "   Auto-Update:              aller 2 Tage (update.conf: $CONF_DIR/update.conf)"
