@@ -4,12 +4,13 @@
 //! Upstream-Diagnostik). Bündelung ohne externe Assets (kein CDN-Leak).
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Query as AxQuery, State};
 use axum::http::{header, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
@@ -70,6 +71,38 @@ pub struct SetupHandles {
     pub lists: Arc<Mutex<Vec<ListInfo>>>,
     pub base_cfg: ResolvedConfig,
     pub selection_path: PathBuf,
+    /// Marker-Datei (in `data_dir`): existiert = Setup einmal abgeschlossen.
+    pub done_path: PathBuf,
+    /// Runtime-Fenster des Flags (Marker wird beim Start eingelesen).
+    pub setup_done: Arc<AtomicBool>,
+}
+
+/// (Flag, Marker-Pfad) für „Setup einmal abgeschlossen" aus dem `data_dir`.
+///
+/// Erststart-Erlebnis: solange das Flag `false` ist, landet `/` direkt auf
+/// `/setup`; nach dem ersten erfolgreichen Setup-Submit bleibt Dashboard.
+pub fn setup_done_paths(data_dir: &Path) -> (Arc<AtomicBool>, PathBuf) {
+    let done = data_dir.join("setup_done.flag");
+    let done_exists = done.is_file();
+    (
+        Arc::new(AtomicBool::new(done_exists)),
+        done,
+    )
+}
+
+/// Nach erfolgreichem Setup-Submit aufrufen: Flag setzen + Marker legen
+/// (Best-Effort; ohne Persist bleibt das Flag nur für diese Laufzeit).
+pub fn mark_setup_done(handles: &SetupHandles) {
+    handles.setup_done.store(true, Ordering::Relaxed);
+    if let Err(e) = std::fs::write(&handles.done_path, b"") {
+        tracing::warn!(
+            error = %e,
+            path = %handles.done_path.display(),
+            "Setup-Marker konnte nicht geschrieben werden"
+        );
+    } else {
+        tracing::info!(path = %handles.done_path.display(), "Setup abgeschlossen – Dashboard unter /");
+    }
 }
 
 /// Der geteilte Zustand der Web-UI (parallel zum DNS-Server).
@@ -120,8 +153,13 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<()> {
 
 // ---------- HTML-Seiten ----------
 
-async fn dashboard() -> Html<&'static str> {
-    Html(include_str!("../assets/dashboard.html"))
+async fn dashboard(State(state): State<AppState>) -> Response {
+    // Erststart-Erlebnis: Setup nie abgeschlossen → direkt zum Setup-Portal.
+    if !state.setup.setup_done.load(Ordering::Relaxed) {
+        tracing::info!("Erster Start (Setup offen) – / verweist auf /setup");
+        return Redirect::temporary("/setup").into_response();
+    }
+    Html(include_str!("../assets/dashboard.html")).into_response()
 }
 
 async fn test_page() -> Html<&'static str> {
@@ -324,6 +362,8 @@ async fn api_setup_post(
         )
             .into_response();
     }
+    // Setup gilt ab jetzt als abgeschlossen: `/` zeigt ab hier das Dashboard.
+    mark_setup_done(&state.setup);
     // Sofort anwenden (Fetch + Rebuild + Hot-Swap) im Hintergrund; der
     // periodische Supervisor übernimmt die Auswahl spätestens am Zyklus.
     let handles = state.setup.clone();
@@ -341,4 +381,100 @@ async fn api_setup_post(
         "hint": "Anwendung läuft im Hintergrund; /api/stats (engine_domains) zeigt die neue Anzahl."
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filter_engine::FilterEngine;
+
+    fn test_state(data_dir: &Path) -> (AppState, Arc<SetupHandles>) {
+        let (setup_done, done_path) = setup_done_paths(data_dir);
+        let handles = Arc::new(SetupHandles {
+            engine: Arc::new(RwLock::new(Arc::new(FilterEngine::new()))),
+            lists: Arc::new(Mutex::new(Vec::new())),
+            base_cfg: crate::config::Config::parse_str(
+                "listen_udp = \"127.0.0.1:0\"\nlisten_tcp = \"127.0.0.1:0\"\nupstream = \"127.0.0.1:53\"\n",
+            )
+            .unwrap()
+            .resolve()
+            .unwrap(),
+            selection_path: data_dir.join("remote_lists.json"),
+            done_path,
+            setup_done,
+        });
+        let state = AppState {
+            engine: handles.engine.clone(),
+            stats: Arc::new(Stats::default()),
+            lists: handles.lists.clone(),
+            net: Arc::new(NetworkInfo::default()),
+            uplink_last: Arc::new(RwLock::new(Vec::new())),
+            uplink_servers: Arc::new(Vec::new()),
+            block_mode: "zero",
+            upstream_desc: "Test".into(),
+            setup: handles.clone(),
+        };
+        (state, handles)
+    }
+
+    /// Erststart-Logik: solange kein Setup gespeichert wurde, verweist `/`
+    /// auf `/setup`; nach `mark_setup_done` (und nach „Neustart" über den
+    /// Marker) zeigt `/` das Dashboard.
+    #[tokio::test]
+    async fn dashboard_redirects_to_setup_until_saved() {
+        let dir = std::env::temp_dir().join(format!(
+            "dnsblock-webtest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let (state, handles) = test_state(&dir);
+        let app = router(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let base = format!("http://{addr}");
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        // 1) Erststart: / verweist auf /setup.
+        let resp = client.get(format!("{base}/")).send().await.unwrap();
+        assert_eq!(resp.status(), 307, "erster Start: / sollte weiterleiten");
+        assert_eq!(resp.headers().get("Location").unwrap(), "/setup");
+        assert!(!resp.url().as_str().ends_with("/setup"));
+
+        // /setup selbst bleibt normal erreichbar:
+        let resp = client.get(format!("{base}/setup")).send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+
+        // 2) Setup-Submit: Flag + Marker.
+        assert!(!handles.setup_done.load(Ordering::Relaxed));
+        mark_setup_done(&handles);
+        assert!(handles.setup_done.load(Ordering::Relaxed));
+        assert!(handles.done_path.is_file(), "Marker fehlt");
+
+        // Ab jetzt zeigt / das Dashboard:
+        let resp = client.get(format!("{base}/")).send().await.unwrap();
+        assert_eq!(resp.status(), 200, "nach Setup: / ist Dashboard");
+        assert!(resp
+            .headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.starts_with("text/html"))
+            .unwrap_or(false));
+
+        // 3) „Neustart": Flag wird aus dem Marker wiederhergestellt.
+        let (restarted, _) = setup_done_paths(&dir);
+        assert!(restarted.load(Ordering::Relaxed), "Marker muss persistieren");
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

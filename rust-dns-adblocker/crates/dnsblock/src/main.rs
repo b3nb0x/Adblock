@@ -121,6 +121,10 @@ async fn main() {
         Some(url) => format!("{} + DoH {}", cfg.upstream, url),
         None => format!("{} (UDP/TCP)", cfg.upstream),
     };
+    // Setup-Marker: erster Start → `/` verweist auf `/setup`,
+    // nach dem ersten gespeicherten Setup zeigt `/` das Dashboard.
+    let (setup_done, setup_done_path) = web::setup_done_paths(&cfg.data_dir);
+
     let app_state = web::AppState {
         engine: engine.clone(),
         stats: handle.stats.clone(),
@@ -135,6 +139,8 @@ async fn main() {
             lists: lists_registry.clone(),
             base_cfg: cfg.clone(),
             selection_path: updater::selection_path(&cfg.data_dir),
+            done_path: setup_done_path,
+            setup_done,
         }),
     };
     match cfg.admin_listen {
