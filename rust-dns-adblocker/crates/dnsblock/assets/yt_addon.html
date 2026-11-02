@@ -42,5 +42,11 @@
   <p>Installiere das Userscript z. B. per Tampermonkey/Greasemonkey mit <code>@match https://www.youtube.com/*</code>.</p>
   <p class="muted">Danach auf der <a href="/test">Testseite</a> prüfen: YT-Suchbegriff → Blockstatus → Addon greift.</p>
 </div>
+
+<div class="sec">
+  <h2>SponsorBlock-Style: Content-Segmente</h2>
+  <p>Das Addon überspringt zusätzlich Content-Segmente wie <b>Sponsor</b>, <b>Self-Promo</b>, <b>Intro</b>, <b>Outro</b> oder <b>Preview</b> – adoptiert aus dem open-source Projekt <a href="https://github.com/ajayyy/SponsorBlock" target="_blank" rel="noopener">SponsorBlock for YouTube</a>.</p>
+  <p class="muted">Der Skip läuft über den Segment-Query des SponsorBlock-Servers (<code>/api/skipSegments/…</code>) und einen Player-Seek – ohne DNS-Eingriff am Video selbst.</p>
+</div>
 </body>
 </html>
