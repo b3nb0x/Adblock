@@ -142,7 +142,9 @@ async fn main() {
             done_path: setup_done_path,
             setup_done,
         }),
+        system_log: Arc::new(std::sync::Mutex::new(Vec::new())),
     };
+    app_state.sys_log("info", "Web-UI bereitgestellt");
     match cfg.admin_listen {
         Some(addr) => {
             let state_clone = app_state.clone();

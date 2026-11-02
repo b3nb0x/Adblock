@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnsblock – Blocklisten</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c23; --panel2:#1e242d; --line:#2a323d; --text:#dbe4ee; --muted:#8b98a8; --green:#46d18f; --red:#ff6b6b; --blue:#6ea8fe; --accent:#7ee787; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:15px/1.5 system-ui,sans-serif; padding:24px; max-width:1100px; margin:0 auto; }
+  header { display:flex; align-items:baseline; gap:16px; margin-bottom:20px; }
+  header h1 { font-size:22px; letter-spacing:.5px; }
+  header .hint { color:var(--muted); font-size:13px; }
+  header nav { margin-left:auto; } header nav a { color:var(--blue); text-decoration:none; margin-left:14px; font-size:14px; }
+  .sec { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:18px; }
+  .sec h2 { font-size:15px; margin-bottom:10px; color:var(--accent); text-transform:uppercase; letter-spacing:.6px; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); word-break:break-all; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
+  tr:last-child td { border-bottom:0; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; font-weight:600; }
+  .pill.b { background:rgba(255,107,107,.14); color:var(--red); }
+  .pill.f { background:rgba(70,209,143,.14); color:var(--green); }
+  .pill.x { background:rgba(255,209,102,.14); color:var(--yellow); }
+  .pill.ok { background:rgba(70,209,143,.14); color:var(--green); }
+  .pill.bad { background:rgba(255,107,107,.14); color:var(--red); }
+  .pill.remote { background:rgba(110,168,254,.14); color:var(--blue); }
+  .muted { color:var(--muted); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  input[type=text] { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:13.5px; min-width:280px; }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; font-size:13.5px; }
+  button:hover { border-color:var(--accent); }
+  code { background:var(--panel2); padding:1px 6px; border-radius:5px; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡 dnsblock</h1>
+  <span class="hint">Rust-DNS-Adblocker · Open-Source-DNS-Blocker</span>
+  <nav>
+       <a href="/">Dashboard</a>
+       <a href="/setup">Setup</a>
+       <a href="/blocklists">Blocklisten</a>
+       <a href="/test">Testseite</a>
+       <a href="/yt-addon">YT-Addon</a>
+    </nav>
+</header>
+
+<div class="sec">
+  <h2>Geladene Listen</h2>
+  <table><thead><tr><th>Quelle</th><th>Typ</th><th>Einträge</th></tr></thead><tbody id="lists_body">Lade …</tbody></table>
+</div>
+
+<div class="sec">
+  <h2>Blocklisten-Katalog (Remote)</h2>
+  <div class="row" style="margin-bottom:10px">
+    <input type="text" id="new_list_url" placeholder="https://…/hosts.txt (Remote-Blockliste)">
+    <button id="btn_add">Hinzufügen</button>
+  </div>
+  <table><thead><tr><th>Name</th><th>Beschreibung</th><th>URL</th><th></th></tr></thead><tbody id="catalog_body">Lade …</tbody></table>
+</div>
+
+<div class="sec">
+  <h2>Eigene Blocklisten</h2>
+  <div class="row">
+    <input type="text" id="custom_url" placeholder="https://…/hosts.txt (eigene Blockliste)">
+    <button id="btn_custom_add">Eigene hinzufügen</button>
+    <button id="btn_custom_reload">Engine neu laden</button>
+  </div>
+  <table><thead><tr><th>URL</th><th></th></tr></thead><tbody id="custom_body">Lade …</tbody></table>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+async function jf(url, opt) { const r = await fetch(url, opt); if (!r.ok) throw new Error(url + " → HTTP " + r.status); return r.json(); }
+async function loadAll() {
+  try {
+    const r = await jf("/api/blocklists");
+    $("lists_body").innerHTML = (r.lists ?? []).map(l =>
+      `<tr><td>${l.name}</td><td><span class="pill ${l.kind}">${l.kind}</span></td><td>${Number(l.domains).toLocaleString("de-DE")}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">Keine Listen geladen.</td></tr>';
+    $("catalog_body").innerHTML = (r.catalog ?? []).map(c =>
+      `<tr><td>${c.name}</td><td class="muted">${c.desc}</td><td><code>${c.url}</code></td><td>${c.selected ? '<span class="pill ok">aktiv</span>' : `<button class="cat-add" data-url="${c.url}">Hinzufügen</button>`}</td></tr>`).join("");
+    $("custom_body").innerHTML = (r.custom ?? []).map(u =>
+      `<tr><td><code>${u}</code></td><td><button class="custom-rm" data-url="${u}">Entfernen</button></td></tr>`).join("") || '<tr><td colspan="2" class="muted">Keine eigenen Blocklisten.</td></tr>';
+  } catch (e) { console.error(e); }
+}
+document.getElementById("btn_add").addEventListener("click", async () => {
+  const v = $("new_list_url").value.trim();
+  try { await jf("/api/blocklists/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: v }) }); await loadAll(); }
+  catch (e) { alert("Fehler: " + e.message); }
+});
+document.getElementById("btn_custom_add").addEventListener("click", async () => {
+  const v = $("custom_url").value.trim();
+  try { await jf("/api/blocklists/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: v }) }); await loadAll(); }
+  catch (e) { alert("Fehler: " + e.message); }
+});
+document.getElementById("btn_custom_reload").addEventListener("click", async () => { try { await jf("/api/blocklists/reload", { method: "POST" }); await loadAll(); } catch (e) { alert("Fehler: " + e.message); } });
+document.querySelectorAll(".cat-add").forEach(b => b.addEventListener("click", async () => {
+  const url = b.getAttribute("data-url");
+  try { await jf("/api/blocklists/add", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) }); await loadAll(); } catch (e) { alert("Fehler: " + e.message); }
+}));
+document.querySelectorAll(".custom-rm").forEach(b => b.addEventListener("click", async () => {
+  const url = b.getAttribute("data-url");
+  try { await jf("/api/blocklists/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) }); await loadAll(); } catch (e) { alert("Fehler: " + e.message); }
+}));
+loadAll();
+</script>
+</body>
+</html>

@@ -459,8 +459,10 @@ install_files_user() {
     if [ ! -f "$CONF_DIR/config.toml" ]; then
         cat > "$CONF_DIR/config.toml" <<EOF
 # dnsblock – Benutzerkonfiguration (ohne Root, Port $PORT statt 53)
-listen_udp = "127.0.0.1:$PORT"
-listen_tcp = "127.0.0.1:$PORT"
+# Binden auf 0.0.0.0 (Port >1024 erlaubt User ohne Root) – Dashboard + DNS
+# für das Heimnetz (LAN) erreichbar halten.
+listen_udp = "0.0.0.0:$PORT"
+listen_tcp = "0.0.0.0:$PORT"
 upstream = "1.1.1.1:53"
 upstream_doh = "https://dns.cloudflare.com/dns-query"
 block_mode = "zero"
@@ -468,7 +470,7 @@ blocklists = [
     $(conf_blocklists_paths)
 ]
 allowlists = []
-admin_listen = "127.0.0.1:$ADMIN_PORT"
+admin_listen = "0.0.0.0:$ADMIN_PORT"
 uplink_test_servers = ["1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"]
 fetch_remote = true
 remote_refresh_hours = 24

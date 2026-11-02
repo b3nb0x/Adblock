@@ -113,6 +113,39 @@ pub fn active_selection(cfg: &ResolvedConfig) -> Vec<String> {
         .unwrap_or_else(|| cfg.remote_blocklists.clone())
 }
 
+/// Persistierte benutzerdefinierte Blocklisten (JSON-Array von URLs), Web-UI.
+pub fn custom_lists_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("custom_blocklists.json")
+}
+
+/// Format der Custom-Listen-Datei (Web-UI → Daemon).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CustomListsFile {
+    /// Benutzerdefinierte Remote-Blocklisten-URLs.
+    pub urls: Vec<String>,
+}
+
+/// Liest die benutzerdefinierten Blocklisten; fehlt/kaputt ⇒ leer (Fail-safe).
+pub fn read_custom_lists(data_dir: &Path) -> Vec<String> {
+    let path = custom_lists_path(data_dir);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    match serde_json::from_str::<CustomListsFile>(&text) {
+        Ok(f) => f.urls,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "custom_blocklists.json unlesbar");
+            Vec::new()
+        }
+    }
+}
+
+/// Schreibt die benutzerdefinierten Blocklisten atomar (Web-UI → Daemon).
+pub fn write_custom_lists(data_dir: &Path, urls: &[String]) -> io::Result<()> {
+    let payload = serde_json::to_vec_pretty(&CustomListsFile {
+        urls: urls.to_vec(),
+    })?;
+    atomic_write(&custom_lists_path(data_dir), &payload)
+}
+
 /// Zieht die gegebenen URLs in den Cache (fail-closed, atomar).
 /// Rückgabe: (erfolgreich, fehlgeschlagen) URLs.
 pub async fn sync_remote_lists_for(cfg: &ResolvedConfig, urls: &[String]) -> (usize, usize) {

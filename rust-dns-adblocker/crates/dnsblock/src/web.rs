@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{Query as AxQuery, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use serde::Deserialize;
 use tokio::sync::RwLock;
@@ -105,6 +105,41 @@ pub fn mark_setup_done(handles: &SetupHandles) {
     }
 }
 
+/// Eintrag im System-Log (Startup/Reload/Aktionen) – RAM-only, wie das Query-Log.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SystemLogEntry {
+    /// Unix-Timestamp in Millisekunden.
+    pub ts: u64,
+    /// Level: "info" | "warn" | "error".
+    pub level: &'static str,
+    /// Loginhalt.
+    pub msg: String,
+}
+
+impl AppState {
+    /// Schreibt einen System-Log-Eintrag (RAM-only, begrenzt, wie Stats::log).
+    pub fn sys_log(&self, level: &'static str, msg: impl Into<String>) {
+        let mut log = self.system_log.lock().unwrap();
+        if log.len() >= 200 {
+            log.remove(0);
+        }
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        log.push(SystemLogEntry {
+            ts,
+            level,
+            msg: msg.into(),
+        });
+    }
+
+    /// Snapshot des System-Logs (älteste zuerst).
+    pub fn sys_log_snapshot(&self) -> Vec<SystemLogEntry> {
+        self.system_log.lock().unwrap().clone()
+    }
+}
+
 /// Der geteilte Zustand der Web-UI (parallel zum DNS-Server).
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -117,6 +152,7 @@ pub struct AppState {
     pub block_mode: &'static str,
     pub upstream_desc: String,
     pub setup: Arc<SetupHandles>,
+    pub system_log: Arc<Mutex<Vec<SystemLogEntry>>>,
 }
 
 pub fn block_mode_name(mode: BlockMode) -> &'static str {
@@ -134,6 +170,10 @@ pub fn router(state: AppState) -> Router {
         .route("/test", get(test_page))
         .route("/setup", get(setup_page))
         .route("/userscript.js", get(userscript))
+        .route("/blocklists", get(blocklists_page))
+        .route("/yt-addon", get(yt_addon_page))
+        .route("/systemlog", get(systemlog_page))
+        .route("/blocklog", get(blocklog_page))
         .route("/api/stats", get(api_stats))
         .route("/api/lists", get(api_lists))
         .route("/api/network", get(api_network))
@@ -141,6 +181,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/uplink/last", get(api_uplink_last))
         .route("/api/probe", get(api_probe))
         .route("/api/setup", get(api_setup_get).post(api_setup_post))
+        .route("/api/blocklists", get(api_blocklists))
+        .route("/api/blocklists/add", post(api_blocklists_add))
+        .route("/api/blocklists/remove", post(api_blocklists_remove))
+        .route("/api/blocklists/reload", post(api_blocklists_reload))
+        .route("/api/blocklog", get(api_blocklog))
+        .route("/api/logs", get(api_logs))
         .with_state(state)
 }
 
@@ -174,6 +220,22 @@ async fn userscript() -> Response {
         .into_response()
 }
 
+async fn blocklists_page() -> Response {
+    Html(include_str!("../assets/blocklists.html")).into_response()
+}
+
+async fn yt_addon_page() -> Response {
+    Html(include_str!("../assets/yt_addon.html")).into_response()
+}
+
+async fn systemlog_page() -> Response {
+    Html(include_str!("../assets/systemlog.html")).into_response()
+}
+
+async fn blocklog_page() -> Response {
+    Html(include_str!("../assets/blocklog.html")).into_response()
+}
+
 // ---------- API ----------
 
 async fn api_stats(State(state): State<AppState>) -> Response {
@@ -193,12 +255,7 @@ async fn api_stats(State(state): State<AppState>) -> Response {
             .load(std::sync::atomic::Ordering::Relaxed),
     );
     let engine = state.engine.read().await.clone();
-    let log: Vec<serde_json::Value> = state
-        .stats
-        .log_snapshot()
-        .into_iter()
-        .map(|e| serde_json::json!({ "ts": e.ts, "qname": e.qname, "action": e.action.as_str() }))
-        .collect();
+    let log: Vec<serde_json::Value> = query_log_json(&state.stats);
     axum::Json(serde_json::json!({
         "total": total,
         "blocked": blocked,
@@ -221,6 +278,168 @@ async fn api_lists(State(state): State<AppState>) -> Response {
         })).collect::<Vec<_>>(),
     }))
     .into_response()
+}
+
+/// Query-Log → JSON-Array (für /api/stats und /api/blocklog identisch).
+fn query_log_json(stats: &Stats) -> Vec<serde_json::Value> {
+    stats
+        .log_snapshot()
+        .into_iter()
+        .map(|e| serde_json::json!({ "ts": e.ts, "qname": e.qname, "action": e.action.as_str() }))
+        .collect()
+}
+
+// ---------- Blocklisten: Übersicht + Custom-Add/Remove/Reload ----------
+
+/// Merge: Setup-Auswahl (remote_lists.json bzw. Konfig-Default) + Custom-Listen.
+fn merged_remote_urls(state: &AppState) -> Vec<String> {
+    let mut urls = updater::active_selection(&state.setup.base_cfg);
+    for u in updater::read_custom_lists(&state.setup.base_cfg.data_dir) {
+        if !urls.iter().any(|x| x == &u) {
+            urls.push(u);
+        }
+    }
+    urls
+}
+
+async fn api_blocklists(State(state): State<AppState>) -> Response {
+    let lists = state.lists.lock().unwrap().clone();
+    let selection = updater::active_selection(&state.setup.base_cfg);
+    let catalog: Vec<CatalogJson> = CATALOG
+        .iter()
+        .map(|c| CatalogJson {
+            name: c.name.to_string(),
+            desc: c.desc.to_string(),
+            url: c.url.to_string(),
+            selected: selection.iter().any(|u| u == c.url),
+        })
+        .collect();
+    let custom = updater::read_custom_lists(&state.setup.base_cfg.data_dir);
+    axum::Json(serde_json::json!({
+        "lists": lists.iter().map(|l| serde_json::json!({
+            "name": l.name, "kind": l.kind, "domains": l.domains,
+        })).collect::<Vec<_>>(),
+        "catalog": catalog,
+        "custom": custom,
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct BlocklistUrlPayload {
+    url: String,
+}
+
+fn valid_remote_url(u: &str) -> bool {
+    let u = u.trim();
+    (u.starts_with("https://") || u.starts_with("http://"))
+        && u.len() <= 400
+        && !u.contains(char::is_whitespace)
+}
+
+/// Führt Sync + Engine-Reload für die aktiven Listen aus (Custom-Änderungen).
+async fn reload_engine_state(state: &AppState) -> (usize, usize, String) {
+    let urls = merged_remote_urls(state);
+    let (ok, bad) = updater::sync_remote_lists_for(&state.setup.base_cfg, &urls).await;
+    let mut last_err = String::new();
+    match updater::rebuild_with(&state.setup.base_cfg, &urls) {
+        Ok(fresh) => {
+            updater::swap_engine(state.engine.clone(), &state.lists, fresh).await;
+        }
+        Err(e) => {
+            last_err = e.to_string();
+        }
+    }
+    (ok, bad, last_err)
+}
+
+async fn api_blocklists_add(
+    State(state): State<AppState>,
+    axum::Json(payload): axum::Json<BlocklistUrlPayload>,
+) -> Response {
+    let url = payload.url.trim().to_string();
+    if !valid_remote_url(&url) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "unzulässige URL" })),
+        )
+            .into_response();
+    }
+    let mut custom = updater::read_custom_lists(&state.setup.base_cfg.data_dir);
+    if !custom.iter().any(|u| u == &url) {
+        custom.push(url.clone());
+        if let Err(e) = updater::write_custom_lists(&state.setup.base_cfg.data_dir, &custom) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": format!("Persist fehlgeschlagen: {e}") })),
+            )
+                .into_response();
+        }
+    }
+    state.sys_log("info", format!("Blockliste hinzugefügt: {url}"));
+    let (ok, bad, err) = reload_engine_state(&state).await;
+    if !err.is_empty() {
+        state.sys_log("warn", format!("Engine-Reload fehlgeschlagen: {err}"));
+    }
+    axum::Json(serde_json::json!({
+        "ok": err.is_empty(),
+        "added": url,
+        "synced": ok,
+        "failed": bad,
+    }))
+    .into_response()
+}
+
+async fn api_blocklists_remove(
+    State(state): State<AppState>,
+    axum::Json(payload): axum::Json<BlocklistUrlPayload>,
+) -> Response {
+    let url = payload.url.trim().to_string();
+    let mut custom = updater::read_custom_lists(&state.setup.base_cfg.data_dir);
+    let before = custom.len();
+    custom.retain(|u| u != &url);
+    if custom.len() == before {
+        return (
+            StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "error": "Blockliste nicht gefunden" })),
+        )
+            .into_response();
+    }
+    if let Err(e) = updater::write_custom_lists(&state.setup.base_cfg.data_dir, &custom) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({ "error": format!("Persist fehlgeschlagen: {e}") })),
+        )
+            .into_response();
+    }
+    state.sys_log("info", format!("Blockliste entfernt: {url}"));
+    let (ok, bad, err) = reload_engine_state(&state).await;
+    if !err.is_empty() {
+        state.sys_log("warn", format!("Engine-Reload fehlgeschlagen: {err}"));
+    }
+    axum::Json(serde_json::json!({ "ok": true, "removed": url, "synced": ok, "failed": bad }))
+        .into_response()
+}
+
+async fn api_blocklists_reload(State(state): State<AppState>) -> Response {
+    let (ok, bad, err) = reload_engine_state(&state).await;
+    state.sys_log("info", format!("Engine-Reload ausgelöst (sync ok={ok} failed={bad})"));
+    axum::Json(serde_json::json!({
+        "ok": err.is_empty(),
+        "synced": ok,
+        "failed": bad,
+        "error": err,
+    }))
+    .into_response()
+}
+
+async fn api_blocklog(State(state): State<AppState>) -> Response {
+    axum::Json(serde_json::json!({ "log": query_log_json(&state.stats) })).into_response()
+}
+
+async fn api_logs(State(state): State<AppState>) -> Response {
+    let entries = state.sys_log_snapshot();
+    axum::Json(serde_json::json!({ "log": entries })).into_response()
 }
 
 async fn api_network(State(state): State<AppState>) -> Response {
@@ -261,17 +480,23 @@ struct ProbeParams {
     d: String,
 }
 
+/// Validiert eine Test-Domain (kleingeschrieben, ohne Trailing-Dot, max 253).
+pub fn is_valid_domain(s: &str) -> bool {
+    let domain = s.trim().trim_end_matches('.').to_ascii_lowercase();
+    !domain.is_empty()
+        && domain.len() <= 253
+        && domain
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
+}
+
 /// Direkt-Abfrage der Filter-Engine für eine Domain (Testseite).
 async fn api_probe(
     State(state): State<AppState>,
     AxQuery(params): AxQuery<ProbeParams>,
 ) -> Response {
     let domain = params.d.trim().trim_end_matches('.').to_ascii_lowercase();
-    let valid = !domain.is_empty()
-        && domain.len() <= 253
-        && domain
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_');
+    let valid = is_valid_domain(&params.d);
     if !valid {
         return (
             StatusCode::BAD_REQUEST,
@@ -413,6 +638,7 @@ mod tests {
             block_mode: "zero",
             upstream_desc: "Test".into(),
             setup: handles.clone(),
+            system_log: Arc::new(Mutex::new(Vec::new())),
         };
         (state, handles)
     }
@@ -476,5 +702,17 @@ mod tests {
 
         server.abort();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_valid_domain_checks_format() {
+        assert!(is_valid_domain("doubleclick.net"));
+        assert!(is_valid_domain("  ADS.Example.COM. "));
+        assert!(!is_valid_domain(""));
+        assert!(!is_valid_domain(".."));
+        // '-'/'_' sind wie bisher erlaubt (Chars alnum, '.', '-', '_').
+        assert!(is_valid_domain("-bad-.example"));
+        assert!(!is_valid_domain("http://evil.example.com"));
+        assert!(!is_valid_domain(&"a".repeat(254)));
     }
 }

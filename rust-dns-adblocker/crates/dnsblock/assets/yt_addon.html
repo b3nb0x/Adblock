@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dnsblock – YT-Addon</title>
+<style>
+  :root { --bg:#0f1216; --panel:#171c23; --panel2:#1e242d; --line:#2a323d; --text:#dbe4ee; --muted:#8b98a8; --blue:#6ea8fe; --accent:#7ee787; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font:15px/1.5 system-ui,sans-serif; padding:24px; max-width:900px; margin:0 auto; }
+  header { margin-bottom:20px; }
+  header h1 { font-size:22px; letter-spacing:.5px; }
+  header .hint { color:var(--muted); font-size:13px; }
+  header nav { margin-top:10px; } header nav a { color:var(--blue); text-decoration:none; margin-right:14px; font-size:14px; }
+  .sec { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:18px; }
+  .sec h2 { font-size:15px; margin-bottom:10px; color:var(--accent); text-transform:uppercase; letter-spacing:.6px; }
+  .muted { color:var(--muted); }
+  code { background:var(--panel2,#1e242d); padding:1px 6px; border-radius:5px; font-size:13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 YT-Addon</h1>
+  <span class="hint">Rust-DNS-Adblocker · Open-Source-DNS-Blocker</span>
+  <nav>
+       <a href="/">Dashboard</a>
+       <a href="/setup">Setup</a>
+       <a href="/blocklists">Blocklisten</a>
+       <a href="/test">Testseite</a>
+       <a href="/yt-addon">YT-Addon</a>
+    </nav>
+</header>
+
+<div class="sec">
+  <h2>YouTube-Ad-Skip per DNS</h2>
+  <p>Das Userscript <a href="/userscript.js"><code>/userscript.js</code></a> markiert YouTube-Wiedergabelinken, die von den Blocklisten betroffen sind, und überspringt sie automatisch.</p>
+  <p class="muted">Hinweis: Das Blockieren von YouTube-Einblendungen läuft über die <a href="/blocklists">Blocklisten</a>; das Addon setzt die Wiedergabe dort fort, wo die Engine sie erkannt hat.</p>
+</div>
+
+<div class="sec">
+  <h2>Installations-Snippet</h2>
+  <p>Installiere das Userscript z. B. per Tampermonkey/Greasemonkey mit <code>@match https://www.youtube.com/*</code>.</p>
+  <p class="muted">Danach auf der <a href="/test">Testseite</a> prüfen: YT-Suchbegriff → Blockstatus → Addon greift.</p>
+</div>
+</body>
+</html>
