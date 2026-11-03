@@ -15,10 +15,13 @@
 #  Flags (alle optional):
 #      --mode <server|pi|docker>   Modus vorgeben (überspringt Menü)
 #      --uninstall                 Deinstallation
+#      --uninstall --full          Full-Uninstall: ohne Nachfrage ALLES entfernen
+#                                  (Binary, Config, Daten, Logs, Update-Units)
 #      --update                    Update im bereits installierten Modus
 #      --non-interactive / --yes   keine Nachfragen (Defaults / Umgebungsvariablen)
 #      --skip-selftest             Selbsttest auslassen
-#      --keep-data                 (bei --uninstall) Daten behalten
+#      --keep-data                 (bei --uninstall) Daten behalten (wird von
+#                                  --full überschrieben)
 #      --repo-dir <Pfad>           Quelle = lokales Verzeichnis (Entwickler/Test)
 #
 #  Umgebungsvariablen (automatisierte Läufe):
@@ -51,7 +54,7 @@ URL_TARBALL="https://codeload.github.com/${REPO}/tar.gz/refs/heads/main"
 URL_RELEASE_LATEST="https://github.com/${REPO}/releases/latest/download"
 URL_RUSTUP="https://sh.rustup.rs"
 
-MODE=""; UNINSTALL=0; UPDATE=0; NONINT=0; SKIP_SELFTEST=0; KEEP_DATA=0
+MODE=""; UNINSTALL=0; UPDATE=0; NONINT=0; SKIP_SELFTEST=0; KEEP_DATA=0; FULL=0
 REPO_DIR=""
 PORT="${ADBLOCK_PORT:-53}"
 ADMIN_PORT="${ADBLOCK_ADMIN_PORT:-8080}"
@@ -132,6 +135,7 @@ while [ $# -gt 0 ]; do
         --mode)             MODE="$(normalize_mode "${2:-}")"; shift 2 ;;
         --mode=*)           MODE="$(normalize_mode "${1#*=}")"; shift ;;
         --uninstall)        UNINSTALL=1; shift ;;
+        --full)             FULL=1; shift ;;
         --update)           UPDATE=1; shift ;;
         --non-interactive|--yes|-y)
                             NONINT=1; shift ;;
@@ -904,7 +908,11 @@ self_test() { # $1=dns-port $2=admin-port
 do_uninstall() {
     step "Deinstalliere dnsblock …"
     local wipe=1
-    if [ "$NONINT" = "0" ] && [ -r /dev/tty ]; then
+    if [ "$FULL" = "1" ]; then
+        # Full-Uninstall: ohne Nachfrage alles entfernen (überschreibt --keep-data).
+        wipe=1
+        warn "Full-Uninstall: Binary, Config, Daten, Logs und Update-Reste werden entfernt."
+    elif [ "$NONINT" = "0" ] && [ -r /dev/tty ]; then
         if ask_yn y "Sämtliche Daten & Konfiguration ($CONF_DIR, $DATA_DIR) löschen?"; then wipe=1; else wipe=0; fi
     else
         [ "$KEEP_DATA" = "1" ] && wipe=0 || wipe=1
@@ -951,6 +959,12 @@ do_uninstall() {
         ok "Daten & Konfiguration gelöscht."
     else
         ok "Behalten: $CONF_DIR und $DATA_DIR."
+    fi
+
+    if [ "$FULL" = "1" ]; then
+        # Full-Modus: auch Installer-/Build-Reste in /tmp entfernen.
+        rm -rf /tmp/dnsblock-install.* /tmp/dnsblock-build.* /tmp/dnsblock_test 2>/dev/null || true
+        ok "Temporäre Installer-Reste entfernt."
     fi
     ok "Uninstall abgeschlossen."
 }
