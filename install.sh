@@ -414,14 +414,25 @@ EOF
 
 install_units_root() {
     step "Installiere systemd-Dienste + Auto-Update …"
-    if [ -d "$RSRC/packaging" ]; then
-        install -m 644 "$RSRC/packaging/dnsblock.service"        "$UNIT_DIR/dnsblock.service" || die "dnsblock.service fehlgeschlagen"
-        install -m 644 "$RSRC/packaging/dnsblock-update.service" "$UNIT_DIR/dnsblock-update.service"
-        install -m 644 "$RSRC/packaging/dnsblock-update.timer"   "$UNIT_DIR/dnsblock-update.timer"
-        install -m 755 "$RSRC/packaging/dnsblock-update.sh"      "$UPDATE_BIN"
-    else
-        warn "packaging/ fehlt in der Quelle – Systemd-Installation übersprungen."
-        return 0
+    # Quelle: packaging/ im Repo; im Release-Fast-Pfad (ohne Quellcode) wird
+    # jede Datei einzeln von raw nachgeladen (wie die Seed-Listen).
+    local pkg_ok=1
+    pkg_file() { # <name> <ziel> <mode>
+        local name="$1" ziel="$2" mode="$3"
+        if [ -n "$RSRC" ] && [ -f "$RSRC/packaging/$name" ]; then
+            install -m "$mode" "$RSRC/packaging/$name" "$ziel" || return 1
+        elif fetch_to_file "$URL_RAW/rust-dns-adblocker/packaging/$name" "$ziel" 2>/dev/null; then
+            chmod "$mode" "$ziel" 2>/dev/null || true
+        else
+            return 1
+        fi
+    }
+    pkg_file "dnsblock.service"        "$UNIT_DIR/dnsblock.service"        644 || { die "dnsblock.service fehlgeschlagen"; }
+    pkg_file "dnsblock-update.service" "$UNIT_DIR/dnsblock-update.service" 644 || pkg_ok=0
+    pkg_file "dnsblock-update.timer"   "$UNIT_DIR/dnsblock-update.timer"   644 || pkg_ok=0
+    pkg_file "dnsblock-update.sh"      "$UPDATE_BIN"                       755 || pkg_ok=0
+    if [ "$pkg_ok" = "0" ]; then
+        warn "Einzelne Update-Dateien nicht ladbar – Auto-Update ggf. unvollständig (Dienst läuft trotzdem)."
     fi
 
     if [ ! -f "$CONF_DIR/update.conf" ]; then
