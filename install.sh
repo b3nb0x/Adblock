@@ -436,7 +436,8 @@ install_units_root() {
     fi
 
     if [ ! -f "$CONF_DIR/update.conf" ]; then
-        install -m 644 "$RSRC/packaging/update.conf" "$CONF_DIR/update.conf"
+        pkg_file "update.conf" "$CONF_DIR/update.conf" 644 \
+            || warn "update.conf nicht ladbar – Auto-Update nutzt eingebaute Defaults."
     fi
     # Nachfrage (nur root): Auto-Update an/aus → update.conf setzen
     local au="y"
@@ -681,6 +682,21 @@ handle_resolved() {
 # ---------------------------------------------------------------------------
 # Start / Neustart
 # ---------------------------------------------------------------------------
+kill_stale_instances() { # nohup-/Hand-Instanzen stoppen (halten ggf. Port 53/8080)
+    if [ -f "$DATA_DIR/dnsblock.pid" ]; then
+        local oldpid; oldpid="$(cat "$DATA_DIR/dnsblock.pid" 2>/dev/null)"
+        [ -n "$oldpid" ] && kill "$oldpid" 2>/dev/null || true
+        rm -f "$DATA_DIR/dnsblock.pid"
+    fi
+    # Alle übrigen dnsblock-Prozesse beenden (systemd startet frisch danach).
+    if have pgrep; then
+        pgrep -x dnsblock 2>/dev/null | while read -r p; do
+            kill "$p" 2>/dev/null || true
+        done
+    fi
+    sleep 1
+}
+
 start_service() {
     if [ "$MODE" = "docker" ]; then
         have docker || die "Docker fehlt plötzlich?"
@@ -705,6 +721,7 @@ start_service() {
     fi
     if [ "$IS_ROOT" = "1" ] && [ "$SD_UNIT" = "1" ] && [ -f "$UNIT_DIR/dnsblock.service" ]; then
         step "Aktiviere systemd-Dienst …"
+        kill_stale_instances
         systemctl enable --now dnsblock.service 2>&1 | sed 's/^/   /' || true
         sleep 2
         if systemctl is-active --quiet dnsblock; then
@@ -742,6 +759,7 @@ restart_service() {
         return 0
     fi
     if [ "$IS_ROOT" = "1" ] && [ "$SD_UNIT" = "1" ] && [ -f "$UNIT_DIR/dnsblock.service" ]; then
+        kill_stale_instances
         systemctl restart dnsblock.service && return 0
         return 1
     fi
