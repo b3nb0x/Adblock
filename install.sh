@@ -449,14 +449,19 @@ install_units_root() {
     if [ "$au" = "y" ]; then
         sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=yes/' "$CONF_DIR/update.conf" 2>/dev/null || true
         ok "Auto-Update aktiv (Timer täglich, Script debounct auf 2 Tage;  dnsblock-update --force manuell)."
-        systemctl enable --quiet dnsblock-update.timer 2>/dev/null || true
     else
         sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=no/' "$CONF_DIR/update.conf" 2>/dev/null || true
         warn "Auto-Update deaktiviert (update.conf)."
     fi
 
+    # Wichtig: erst daemon-reload (neue Units bekannt machen), DANN enable.
+    # Timer mit --now, damit er in DIESER Boot-Session läuft (enable allein
+    # wirkt erst beim nächsten Boot).
     systemctl daemon-reload 2>/dev/null || true
     systemctl enable --quiet dnsblock.service 2>/dev/null || true
+    if [ "$au" = "y" ]; then
+        systemctl enable --now --quiet dnsblock-update.timer 2>/dev/null || true
+    fi
 
     # Installer-Cache für den Update-Loop (dnsblock-update.sh fällt sonst auf
     # den GitHub-Download der main-URL zurück).
